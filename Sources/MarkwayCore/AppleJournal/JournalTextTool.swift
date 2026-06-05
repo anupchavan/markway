@@ -4,6 +4,8 @@ public enum JournalTextToolError: Error, CustomStringConvertible, Sendable {
     case notFound
     case failed(status: Int32, stdout: String, stderr: String)
     case invalidOutput(String)
+    case ambiguousSelector(String, [JournalEntrySummary])
+    case selectorNotFound(String)
 
     public var description: String {
         switch self {
@@ -14,6 +16,11 @@ public enum JournalTextToolError: Error, CustomStringConvertible, Sendable {
             return "journal_text.zsh failed with status \(status): \(details)"
         case .invalidOutput(let output):
             return "journal_text.zsh returned output Markway could not parse: \(output)"
+        case .ambiguousSelector(let selector, let matches):
+            let list = matches.prefix(8).map { "\($0.id)  \($0.title)" }.joined(separator: "\n")
+            return "entry selector '\(selector)' is ambiguous:\n\(list)"
+        case .selectorNotFound(let selector):
+            return "no Journal entry matched '\(selector)'"
         }
     }
 }
@@ -35,6 +42,10 @@ public struct JournalTextTool: JournalBackend {
         }
 
         return nil
+    }
+
+    public func list() throws -> [JournalEntrySummary] {
+        try parseListOutput(runRaw(["list"]))
     }
 
     public func add(title: String, bodyFile: URL) throws -> String {
@@ -66,6 +77,29 @@ public struct JournalTextTool: JournalBackend {
         }
 
         return JournalEntryText(id: parsedID, title: title, body: body)
+    }
+
+    public func resolveEntryID(_ selector: String) throws -> String {
+        if selector.range(of: #"^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"#, options: .regularExpression) != nil {
+            return selector.uppercased()
+        }
+
+        let needle = selector.lowercased()
+        let matches = try list().filter { entry in
+            entry.id.lowercased().hasPrefix(needle)
+            || entry.title.lowercased() == needle
+            || entry.title.lowercased().contains(needle)
+        }
+
+        guard let first = matches.first else {
+            throw JournalTextToolError.selectorNotFound(selector)
+        }
+
+        guard matches.count == 1 else {
+            throw JournalTextToolError.ambiguousSelector(selector, matches)
+        }
+
+        return first.id
     }
 
     public func runRaw(_ arguments: [String]) throws -> String {
@@ -119,5 +153,16 @@ public struct JournalTextTool: JournalBackend {
         }
 
         return result
+    }
+
+    private func parseListOutput(_ output: String) throws -> [JournalEntrySummary] {
+        output.split(separator: "\n", omittingEmptySubsequences: true).map { line in
+            let parts = line.split(separator: "\t", maxSplits: 3, omittingEmptySubsequences: false)
+            let id = parts.indices.contains(0) ? String(parts[0]) : ""
+            let status = parts.indices.contains(1) ? String(parts[1]) : ""
+            let created = parts.indices.contains(2) ? String(parts[2]) : ""
+            let title = parts.indices.contains(3) ? String(parts[3]) : ""
+            return JournalEntrySummary(id: id, status: status, created: created, title: title)
+        }
     }
 }

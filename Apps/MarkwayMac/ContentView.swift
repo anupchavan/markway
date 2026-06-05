@@ -50,6 +50,7 @@ struct ContentView: View {
 }
 
 private struct NoopJournalBackend: JournalBackend {
+    func list() throws -> [JournalEntrySummary] { [] }
     func add(title: String, bodyFile: URL) throws -> String { "" }
     func update(id: String, title: String, bodyFile: URL) throws {}
     func get(id: String) throws -> JournalEntryText { JournalEntryText(id: id, title: "", body: "") }

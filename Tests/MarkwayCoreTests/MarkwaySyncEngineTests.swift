@@ -121,6 +121,10 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
         JournalEntryText(id: id, title: "Title", body: "Body")
     }
 
+    func list() throws -> [JournalEntrySummary] {
+        []
+    }
+
     func runRaw(_ arguments: [String]) throws -> String {
         ""
     }
