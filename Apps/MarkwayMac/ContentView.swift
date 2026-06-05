@@ -33,6 +33,10 @@ struct ContentView: View {
                 Button("Open Full Disk Access") {
                     openFullDiskAccessSettings()
                 }
+
+                Button("Reveal Markway.app") {
+                    revealMarkwayApp()
+                }
             }
 
             Text(status)
@@ -150,6 +154,11 @@ struct ContentView: View {
         }
 
         status = "Could not open Full Disk Access. Open System Settings > Privacy & Security > Full Disk Access."
+    }
+
+    private func revealMarkwayApp() {
+        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+        status = "Revealed Markway.app. In Full Disk Access, use + and select this app if it is not listed."
     }
 
     private var vaultURL: URL? {
