@@ -100,6 +100,7 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
 
     var addCalls: [AddCall] = []
     var updateCalls: [UpdateCall] = []
+    var rawCalls: [[String]] = []
     let nextID: String
 
     init(nextID: String) {
@@ -126,7 +127,8 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
     }
 
     func runRaw(_ arguments: [String]) throws -> String {
-        ""
+        rawCalls.append(arguments)
+        return ""
     }
 
     private func copyBodyFile(_ url: URL) throws -> URL {

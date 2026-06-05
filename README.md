@@ -34,6 +34,8 @@ xcodegen generate
 open Markway.xcodeproj
 ```
 
+The Obsidian plugin does not need Full Disk Access. For Journal operations it writes JSON requests into the vault at `.markway/requests`, and Markway.app processes those requests from its bridge while holding the Apple Journal permissions.
+
 ## Tests
 
 ```zsh

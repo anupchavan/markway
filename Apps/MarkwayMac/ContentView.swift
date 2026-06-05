@@ -2,8 +2,10 @@ import MarkwayCore
 import SwiftUI
 
 struct ContentView: View {
-    @State private var vaultPath = ""
+    @State private var vaultPath = UserDefaults.standard.string(forKey: "vaultPath") ?? ""
     @State private var status = "Idle"
+    @State private var bridgeTimer: Timer?
+    @State private var isProcessingBridge = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -17,6 +19,9 @@ struct ContentView: View {
                     scan()
                 }
                 .keyboardShortcut(.defaultAction)
+                Button(bridgeTimer == nil ? "Start bridge" : "Stop bridge") {
+                    toggleBridge()
+                }
             }
 
             Text(status)
@@ -26,18 +31,22 @@ struct ContentView: View {
         }
         .padding(24)
         .frame(minWidth: 560, minHeight: 260)
+        .onDisappear {
+            bridgeTimer?.invalidate()
+            bridgeTimer = nil
+        }
     }
 
     private func scan() {
-        let path = vaultPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else {
+        guard let vaultURL else {
             status = "Choose a vault path."
             return
         }
+        UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
 
         do {
             let engine = MarkwaySyncEngine(journal: NoopJournalBackend())
-            let summary = try engine.scanVault(at: URL(fileURLWithPath: path))
+            let summary = try engine.scanVault(at: vaultURL)
             status = """
             markdown files: \(summary.markdownFiles)
             linked journal entries: \(summary.linkedJournalEntries)
@@ -46,6 +55,62 @@ struct ContentView: View {
         } catch {
             status = String(describing: error)
         }
+    }
+
+    private func toggleBridge() {
+        if let timer = bridgeTimer {
+            timer.invalidate()
+            bridgeTimer = nil
+            status = "Bridge stopped."
+            return
+        }
+
+        guard let vaultURL else {
+            status = "Choose a vault path."
+            return
+        }
+
+        UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
+        processBridge(vaultURL: vaultURL)
+        bridgeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            processBridge(vaultURL: vaultURL)
+        }
+        status = "Bridge started: \(vaultURL.appendingPathComponent(".markway").path)"
+    }
+
+    private func processBridge(vaultURL: URL) {
+        guard !isProcessingBridge else {
+            return
+        }
+
+        isProcessingBridge = true
+        defer { isProcessingBridge = false }
+
+        do {
+            guard let journal = JournalTextTool.discover(from: URL(fileURLWithPath: "/Users/anup/projects/markway")) else {
+                status = "Journal helper not found."
+                return
+            }
+
+            let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: journal)
+            let responses = try bridge.processPendingRequests()
+            if responses.isEmpty {
+                status = "Bridge running: \(vaultURL.appendingPathComponent(".markway").path)"
+            } else {
+                let successes = responses.filter(\.ok).count
+                status = "Processed \(responses.count) request(s), \(successes) ok."
+            }
+        } catch {
+            status = String(describing: error)
+        }
+    }
+
+    private var vaultURL: URL? {
+        let path = vaultPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else {
+            return nil
+        }
+        return URL(fileURLWithPath: path).standardizedFileURL
     }
 }
 
