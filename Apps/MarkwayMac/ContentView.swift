@@ -1,4 +1,5 @@
 import MarkwayCore
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -21,6 +22,16 @@ struct ContentView: View {
                 .keyboardShortcut(.defaultAction)
                 Button(bridgeTimer == nil ? "Start bridge" : "Stop bridge") {
                     toggleBridge()
+                }
+            }
+
+            HStack {
+                Button("Check Journal Access") {
+                    checkJournalAccess()
+                }
+
+                Button("Open Full Disk Access") {
+                    openFullDiskAccessSettings()
                 }
             }
 
@@ -105,6 +116,40 @@ struct ContentView: View {
         } catch {
             status = String(describing: error)
         }
+    }
+
+    private func checkJournalAccess() {
+        do {
+            guard let journal = journalTool() else {
+                status = "Bundled Journal helper not found. Rebuild Markway.app."
+                return
+            }
+
+            _ = try journal.runRaw(["sync-status"])
+            status = "Journal access OK."
+        } catch {
+            status = String(describing: error)
+        }
+    }
+
+    private func openFullDiskAccessSettings() {
+        let settingsURLs = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"
+        ]
+
+        for urlString in settingsURLs {
+            guard let url = URL(string: urlString) else {
+                continue
+            }
+
+            if NSWorkspace.shared.open(url) {
+                status = "Opened Full Disk Access. Enable Markway.app, then fully quit and reopen Markway.app."
+                return
+            }
+        }
+
+        status = "Could not open Full Disk Access. Open System Settings > Privacy & Security > Full Disk Access."
     }
 
     private var vaultURL: URL? {
