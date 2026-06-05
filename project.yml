@@ -27,6 +27,10 @@ targets:
         CODE_SIGNING_ALLOWED: "NO"
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGN_IDENTITY: ""
+    postBuildScripts:
+      - name: Copy Journal Helper
+        script: Scripts/copy_journal_helper.zsh
+        basedOnDependencyAnalysis: false
 schemes:
   Markway:
     build:

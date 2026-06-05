@@ -66,4 +66,9 @@ if [[ "$needs_build" == true ]]; then
     -Xlinker -undefined -Xlinker dynamic_lookup
 fi
 
+if [[ "${JOURNAL_TEXT_BUILD_ONLY:-}" == "1" ]]; then
+  print "$binary"
+  exit 0
+fi
+
 exec "$binary" "$@"

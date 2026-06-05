@@ -73,7 +73,9 @@ struct ContentView: View {
         UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
         processBridge(vaultURL: vaultURL)
         bridgeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            processBridge(vaultURL: vaultURL)
+            Task { @MainActor in
+                processBridge(vaultURL: vaultURL)
+            }
         }
         status = "Bridge started: \(vaultURL.appendingPathComponent(".markway").path)"
     }
@@ -87,8 +89,8 @@ struct ContentView: View {
         defer { isProcessingBridge = false }
 
         do {
-            guard let journal = JournalTextTool.discover(from: URL(fileURLWithPath: "/Users/anup/projects/markway")) else {
-                status = "Journal helper not found."
+            guard let journal = journalTool() else {
+                status = "Bundled Journal helper not found. Rebuild Markway.app."
                 return
             }
 
@@ -111,6 +113,19 @@ struct ContentView: View {
             return nil
         }
         return URL(fileURLWithPath: path).standardizedFileURL
+    }
+
+    private func journalTool() -> JournalTextTool? {
+        let bundledHelper = Bundle.main.bundleURL
+            .appendingPathComponent("Contents")
+            .appendingPathComponent("Helpers")
+            .appendingPathComponent("journal_text")
+
+        if FileManager.default.isExecutableFile(atPath: bundledHelper.path) {
+            return JournalTextTool(executableURL: bundledHelper)
+        }
+
+        return nil
     }
 }
 

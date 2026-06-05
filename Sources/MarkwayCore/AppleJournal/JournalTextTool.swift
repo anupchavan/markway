@@ -15,8 +15,8 @@ public enum JournalTextToolError: Error, CustomStringConvertible, Sendable {
             if isJournalPermissionFailure(stdout + "\n" + stderr) {
                 return """
                 Apple Journal access was denied by macOS privacy controls.
-                Grant Full Disk Access to the app launching Markway, then restart that app.
-                For the Obsidian plugin, grant Full Disk Access to Obsidian.app.
+                Grant Full Disk Access to Markway.app, then fully quit and reopen Markway.app.
+                If you launched Markway from Xcode, run the built app directly or grant Full Disk Access to that launched app.
                 """
             }
             let details = stderr.isEmpty ? stdout : stderr

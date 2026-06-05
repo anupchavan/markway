@@ -75,6 +75,7 @@
 			buildPhases = (
 				0100F18764BA5D0272C84BEA /* Sources */,
 				EC359690C2BE724533547AC2 /* Frameworks */,
+				0576EC13BC20A932901FF2CF /* Copy Journal Helper */,
 			);
 			buildRules = (
 			);
@@ -120,6 +121,28 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		0576EC13BC20A932901FF2CF /* Copy Journal Helper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Copy Journal Helper";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = Scripts/copy_journal_helper.zsh;
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		0100F18764BA5D0272C84BEA /* Sources */ = {
