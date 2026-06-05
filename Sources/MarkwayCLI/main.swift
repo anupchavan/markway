@@ -339,7 +339,7 @@ func printVaultScan(vaultPath: String) throws {
 }
 
 struct MarkwayTUI {
-    private let executablePath = CommandLine.arguments[0]
+    private let commandName = CommandLine.arguments.first ?? "markway"
 
     func run() throws {
         printBanner()
@@ -412,10 +412,31 @@ struct MarkwayTUI {
 
     private func runProcess(arguments: [String]) throws {
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: executablePath)
-        process.arguments = arguments
+        if let executableURL = Self.resolveExecutableURL(commandName) {
+            process.executableURL = executableURL
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [commandName] + arguments
+        }
         try process.run()
         process.waitUntilExit()
+    }
+
+    private static func resolveExecutableURL(_ commandName: String) -> URL? {
+        if commandName.contains("/") {
+            return URL(fileURLWithPath: commandName).standardizedFileURL
+        }
+
+        let pathValue = ProcessInfo.processInfo.environment["PATH"] ?? ""
+        for directory in pathValue.split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory)).appendingPathComponent(commandName)
+            if FileManager.default.isExecutableFile(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
+        return nil
     }
 
     private func printBanner() {
