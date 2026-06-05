@@ -12,6 +12,13 @@ public enum JournalTextToolError: Error, CustomStringConvertible, Sendable {
         case .notFound:
             return "journal_text.zsh was not found. Set MARKWAY_JOURNAL_TEXT_TOOL or pass --journal-tool."
         case .failed(let status, let stdout, let stderr):
+            if isJournalPermissionFailure(stdout + "\n" + stderr) {
+                return """
+                Apple Journal access was denied by macOS privacy controls.
+                Grant Full Disk Access to the app launching Markway, then restart that app.
+                For the Obsidian plugin, grant Full Disk Access to Obsidian.app.
+                """
+            }
             let details = stderr.isEmpty ? stdout : stderr
             return "journal_text.zsh failed with status \(status): \(details)"
         case .invalidOutput(let output):
@@ -165,4 +172,13 @@ public struct JournalTextTool: JournalBackend {
             return JournalEntrySummary(id: id, status: status, created: created, title: title)
         }
     }
+}
+
+private func isJournalPermissionFailure(_ text: String) -> Bool {
+    text.contains("group.com.apple.moments")
+    && (
+        text.contains("Sandbox access to file-read-data denied")
+        || text.contains("NSSQLiteErrorDomain : 23")
+        || text.contains("moments.sqlite")
+    )
 }

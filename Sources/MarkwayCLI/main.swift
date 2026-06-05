@@ -34,10 +34,17 @@ struct Doctor: ParsableCommand {
     @Option(help: "Path to journal_text.zsh.")
     var journalTool: String?
 
+    @Flag(help: "Also verify that this process can read the Apple Journal store.")
+    var journalAccess = false
+
     func run() throws {
         let tool = try resolveJournalTool(journalTool)
         print("journal tool: \(tool.executableURL.path)")
         print("completion: markway --generate-completion-script zsh")
+        if journalAccess {
+            _ = try tool.runRaw(["sync-status"])
+            print("journal access: ok")
+        }
     }
 }
 
