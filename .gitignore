@@ -1,0 +1,9 @@
+.DS_Store
+.build/
+DerivedData/
+*.xcworkspace
+*.xcuserstate
+*.xcuserdata/
+Apps/MarkwayMac/Generated/
+node_modules/
+dist/

@@ -1,0 +1,36 @@
+name: Markway
+options:
+  bundleIdPrefix: com.anupchavan
+  deploymentTarget:
+    macOS: "14.0"
+packages:
+  Markway:
+    path: .
+settings:
+  base:
+    SWIFT_VERSION: 6.0
+targets:
+  Markway:
+    type: application
+    platform: macOS
+    sources:
+      - Apps/MarkwayMac
+    dependencies:
+      - package: Markway
+        product: MarkwayCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.anupchavan.markway
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_CFBundleDisplayName: Markway
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        CODE_SIGNING_ALLOWED: "NO"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGN_IDENTITY: ""
+schemes:
+  Markway:
+    build:
+      targets:
+        Markway: all
+    run:
+      config: Debug
