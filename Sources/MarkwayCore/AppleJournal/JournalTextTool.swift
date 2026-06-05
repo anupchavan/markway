@@ -113,6 +113,7 @@ public struct JournalTextTool: JournalBackend {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.environment = Self.sanitizedSubprocessEnvironment()
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -130,6 +131,14 @@ public struct JournalTextTool: JournalBackend {
         }
 
         return stdoutText
+    }
+
+    static func sanitizedSubprocessEnvironment(
+        _ environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        environment.filter { key, _ in
+            !isUnsafeSubprocessEnvironmentKey(key)
+        }
     }
 
     private static func candidateURLs(from start: URL) -> [URL] {
@@ -172,6 +181,13 @@ public struct JournalTextTool: JournalBackend {
             return JournalEntrySummary(id: id, status: status, created: created, title: title)
         }
     }
+}
+
+private func isUnsafeSubprocessEnvironmentKey(_ key: String) -> Bool {
+    key.hasPrefix("DYLD_")
+    || key.hasPrefix("__XPC_DYLD_")
+    || key == "__XCODE_BUILT_PRODUCTS_DIR_PATHS"
+    || key == "OS_ACTIVITY_DT_MODE"
 }
 
 private func isJournalPermissionFailure(_ text: String) -> Bool {
