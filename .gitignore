@@ -1,9 +1,12 @@
 .DS_Store
 .build/
+.swiftpm/
 DerivedData/
 *.xcworkspace
 *.xcuserstate
 *.xcuserdata/
+xcuserdata/
+**/xcuserdata/
 Apps/MarkwayMac/Generated/
 node_modules/
 dist/
