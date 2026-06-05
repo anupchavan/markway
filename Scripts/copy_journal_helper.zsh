@@ -18,3 +18,8 @@ mkdir -p "$helpers_dir"
 cp -f "$helper_build_dir/journal_text" "$helpers_dir/journal_text"
 cp -f "$helper_build_dir/JournalShareExtension_as_bundle" "$helpers_dir/JournalShareExtension_as_bundle"
 chmod +x "$helpers_dir/journal_text" "$helpers_dir/JournalShareExtension_as_bundle"
+
+if [[ "${CODE_SIGNING_ALLOWED:-}" != "NO" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" && "${EXPANDED_CODE_SIGN_IDENTITY}" != "-" ]]; then
+  codesign --force --timestamp=none --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/JournalShareExtension_as_bundle"
+  codesign --force --timestamp=none --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/journal_text"
+fi

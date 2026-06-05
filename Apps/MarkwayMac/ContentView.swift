@@ -4,7 +4,8 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var vaultPath = UserDefaults.standard.string(forKey: "vaultPath") ?? ""
-    @State private var status = "Idle"
+    @State private var bridgeStatus = "Bridge stopped."
+    @State private var message = "Idle"
     @State private var bridgeTimer: Timer?
     @State private var isProcessingBridge = false
 
@@ -37,12 +38,20 @@ struct ContentView: View {
                 Button("Reveal Markway.app") {
                     revealMarkwayApp()
                 }
+
+                Button("Reveal Journal helper") {
+                    revealJournalHelper()
+                }
             }
 
-            Text(status)
-                .font(.system(.body, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            VStack(alignment: .leading, spacing: 8) {
+                Text(bridgeStatus)
+                Text(message)
+            }
+            .font(.system(.body, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .textSelection(.enabled)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(24)
         .frame(minWidth: 560, minHeight: 260)
@@ -54,7 +63,7 @@ struct ContentView: View {
 
     private func scan() {
         guard let vaultURL else {
-            status = "Choose a vault path."
+            message = "Choose a vault path."
             return
         }
         UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
@@ -62,13 +71,13 @@ struct ContentView: View {
         do {
             let engine = MarkwaySyncEngine(journal: NoopJournalBackend())
             let summary = try engine.scanVault(at: vaultURL)
-            status = """
+            message = """
             markdown files: \(summary.markdownFiles)
             linked journal entries: \(summary.linkedJournalEntries)
             unlinked markdown files: \(summary.unlinkedMarkdownFiles)
             """
         } catch {
-            status = String(describing: error)
+            message = String(describing: error)
         }
     }
 
@@ -76,12 +85,12 @@ struct ContentView: View {
         if let timer = bridgeTimer {
             timer.invalidate()
             bridgeTimer = nil
-            status = "Bridge stopped."
+            bridgeStatus = "Bridge stopped."
             return
         }
 
         guard let vaultURL else {
-            status = "Choose a vault path."
+            message = "Choose a vault path."
             return
         }
 
@@ -92,7 +101,7 @@ struct ContentView: View {
                 processBridge(vaultURL: vaultURL)
             }
         }
-        status = "Bridge started: \(vaultURL.appendingPathComponent(".markway").path)"
+        bridgeStatus = "Bridge started: \(vaultURL.appendingPathComponent(".markway").path)"
     }
 
     private func processBridge(vaultURL: URL) {
@@ -105,34 +114,34 @@ struct ContentView: View {
 
         do {
             guard let journal = journalTool() else {
-                status = "Bundled Journal helper not found. Rebuild Markway.app."
+                message = "Bundled Journal helper not found. Rebuild Markway.app."
                 return
             }
 
             let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: journal)
             let responses = try bridge.processPendingRequests()
             if responses.isEmpty {
-                status = "Bridge running: \(vaultURL.appendingPathComponent(".markway").path)"
+                bridgeStatus = "Bridge running: \(vaultURL.appendingPathComponent(".markway").path)"
             } else {
                 let successes = responses.filter(\.ok).count
-                status = "Processed \(responses.count) request(s), \(successes) ok."
+                message = "Processed \(responses.count) request(s), \(successes) ok."
             }
         } catch {
-            status = String(describing: error)
+            message = String(describing: error)
         }
     }
 
     private func checkJournalAccess() {
         do {
             guard let journal = journalTool() else {
-                status = "Bundled Journal helper not found. Rebuild Markway.app."
+                message = "Bundled Journal helper not found. Rebuild Markway.app."
                 return
             }
 
             _ = try journal.runRaw(["sync-status"])
-            status = "Journal access OK."
+            message = "Journal access OK."
         } catch {
-            status = String(describing: error)
+            message = String(describing: error)
         }
     }
 
@@ -148,17 +157,28 @@ struct ContentView: View {
             }
 
             if NSWorkspace.shared.open(url) {
-                status = "Opened Full Disk Access. Enable Markway.app, then fully quit and reopen Markway.app."
+                message = "Opened Full Disk Access. Enable Markway.app, then fully quit and reopen Markway.app."
                 return
             }
         }
 
-        status = "Could not open Full Disk Access. Open System Settings > Privacy & Security > Full Disk Access."
+        message = "Could not open Full Disk Access. Open System Settings > Privacy & Security > Full Disk Access."
     }
 
     private func revealMarkwayApp() {
         NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
-        status = "Revealed Markway.app. In Full Disk Access, use + and select this app if it is not listed."
+        message = "Revealed Markway.app. In Full Disk Access, use + and select this app if it is not listed."
+    }
+
+    private func revealJournalHelper() {
+        let helperURL = journalHelperURL
+        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
+            message = "Bundled Journal helper not found. Rebuild Markway.app."
+            return
+        }
+
+        NSWorkspace.shared.activateFileViewerSelecting([helperURL])
+        message = "Revealed journal_text. If Journal access still fails after enabling Markway.app, add this helper to Full Disk Access too."
     }
 
     private var vaultURL: URL? {
@@ -170,16 +190,20 @@ struct ContentView: View {
     }
 
     private func journalTool() -> JournalTextTool? {
-        let bundledHelper = Bundle.main.bundleURL
-            .appendingPathComponent("Contents")
-            .appendingPathComponent("Helpers")
-            .appendingPathComponent("journal_text")
+        let bundledHelper = journalHelperURL
 
         if FileManager.default.isExecutableFile(atPath: bundledHelper.path) {
             return JournalTextTool(executableURL: bundledHelper)
         }
 
         return nil
+    }
+
+    private var journalHelperURL: URL {
+        Bundle.main.bundleURL
+            .appendingPathComponent("Contents")
+            .appendingPathComponent("Helpers")
+            .appendingPathComponent("journal_text")
     }
 }
 
