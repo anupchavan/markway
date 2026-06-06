@@ -63,6 +63,10 @@ public struct JournalTextTool: JournalBackend {
         _ = try runRaw(["update", id, "--title", title, "--body", bodyFile.path])
     }
 
+    public func delete(id: String) throws {
+        _ = try runRaw(["delete", id])
+    }
+
     public func get(id: String) throws -> JournalEntryText {
         let output = try runRaw(["get", id])
         let marker = "\n---\n"
@@ -74,16 +78,54 @@ public struct JournalTextTool: JournalBackend {
         let body = String(output[markerRange.upperBound...])
         var parsedID = id
         var title = ""
+        var created = ""
+        var updated = ""
 
         for line in header.split(separator: "\n", omittingEmptySubsequences: false) {
             if line.hasPrefix("id: ") {
                 parsedID = String(line.dropFirst(4))
             } else if line.hasPrefix("title: ") {
                 title = String(line.dropFirst(7))
+            } else if line.hasPrefix("created: ") {
+                created = String(line.dropFirst(9))
+            } else if line.hasPrefix("updated: ") {
+                updated = String(line.dropFirst(9))
             }
         }
 
-        return JournalEntryText(id: parsedID, title: title, body: body)
+        return JournalEntryText(id: parsedID, title: title, body: body, created: created, updated: updated)
+    }
+
+    public func musicAttachments(id: String) throws -> [JournalMusicAttachment] {
+        let output = try runRaw(["attachments", "list", id, "--json"])
+        let data = Data(output.utf8)
+        do {
+            let payload = try JSONDecoder().decode(JournalAttachmentListPayload.self, from: data)
+            return payload.attachments.compactMap { attachment in
+                guard attachment.assetType == "music",
+                      attachment.isFullyRemoved != true,
+                      attachment.isUndoablyDeleted != true,
+                      let song = attachment.metadata?.song?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !song.isEmpty else {
+                    return nil
+                }
+                return JournalMusicAttachment(
+                    id: attachment.id,
+                    song: song,
+                    artistName: attachment.metadata?.artistName ?? "",
+                    mediaId: attachment.metadata?.mediaId ?? "",
+                    source: attachment.source ?? "",
+                    isHidden: attachment.isHidden ?? false,
+                    isSlim: attachment.isSlim ?? false,
+                    mediaType: attachment.metadata?.mediaType?.first?.key ?? "",
+                    startTime: attachment.metadata?.startTime,
+                    createdDate: attachment.createdDate ?? "",
+                    suggestionDate: attachment.suggestionDate ?? ""
+                )
+            }
+        } catch {
+            throw JournalTextToolError.invalidOutput(output)
+        }
     }
 
     public func resolveEntryID(_ selector: String) throws -> String {
@@ -173,15 +215,44 @@ public struct JournalTextTool: JournalBackend {
 
     private func parseListOutput(_ output: String) throws -> [JournalEntrySummary] {
         output.split(separator: "\n", omittingEmptySubsequences: true).map { line in
-            let parts = line.split(separator: "\t", maxSplits: 3, omittingEmptySubsequences: false)
+            let parts = line.split(separator: "\t", maxSplits: 4, omittingEmptySubsequences: false)
             let id = parts.indices.contains(0) ? String(parts[0]) : ""
             let status = parts.indices.contains(1) ? String(parts[1]) : ""
             let created = parts.indices.contains(2) ? String(parts[2]) : ""
-            let title = parts.indices.contains(3) ? String(parts[3]) : ""
-            return JournalEntrySummary(id: id, status: status, created: created, title: title)
+            let updated = parts.indices.contains(4) ? String(parts[3]) : ""
+            let titleIndex = parts.indices.contains(4) ? 4 : 3
+            let title = parts.indices.contains(titleIndex) ? String(parts[titleIndex]) : ""
+            return JournalEntrySummary(id: id, status: status, created: created, updated: updated, title: title)
         }
     }
 }
+
+private struct JournalAttachmentListPayload: Decodable {
+    var attachments: [JournalAttachmentPayload]
+}
+
+private struct JournalAttachmentPayload: Decodable {
+    var id: String
+    var assetType: String?
+    var source: String?
+    var isHidden: Bool?
+    var isSlim: Bool?
+    var isFullyRemoved: Bool?
+    var isUndoablyDeleted: Bool?
+    var createdDate: String?
+    var suggestionDate: String?
+    var metadata: JournalMusicMetadataPayload?
+}
+
+private struct JournalMusicMetadataPayload: Decodable {
+    var song: String?
+    var artistName: String?
+    var mediaId: String?
+    var mediaType: [String: EmptyPayload]?
+    var startTime: Double?
+}
+
+private struct EmptyPayload: Decodable {}
 
 private func isUnsafeSubprocessEnvironmentKey(_ key: String) -> Bool {
     key.hasPrefix("DYLD_")

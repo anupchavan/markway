@@ -186,6 +186,34 @@ _js_call_cr_attributed_string_to_ns_text:
     ldp x20, x30, [sp], #16
     ret
 
+.globl _js_call_cr_attributed_string_count
+_js_call_cr_attributed_string_count:
+    stp x20, x30, [sp, #-16]!
+    mov x20, x0
+    bl _$s9Coherence18CRAttributedStringV5countSivg
+    ldp x20, x30, [sp], #16
+    ret
+
+.globl _js_call_cr_attributed_string_remove_range
+_js_call_cr_attributed_string_remove_range:
+    stp x20, x30, [sp, #-16]!
+    mov x20, x0
+    mov x0, x1
+    mov x1, x2
+    bl _$s9Coherence18CRAttributedStringV14removeSubrangeyySnySiGF
+    ldp x20, x30, [sp], #16
+    ret
+
+.globl _js_call_cr_attributed_string_insert_ns
+_js_call_cr_attributed_string_insert_ns:
+    stp x20, x30, [sp, #-16]!
+    mov x20, x0
+    mov x0, x1
+    mov x1, x2
+    bl _$s9Coherence18CRAttributedStringV6insert10contentsOf2atySo012NSAttributedC0C_SitF
+    ldp x20, x30, [sp], #16
+    ret
+
 .globl _js_call_cr_attributed_string_add_attrs_text
 _js_call_cr_attributed_string_add_attrs_text:
     stp x20, x30, [sp, #-16]!
@@ -257,6 +285,15 @@ _js_call_wrapped_mergeable_entry_attributes_value:
     mov x20, x0
     mov x8, x1
     bl _$s13JournalShared31WrappedMergeableEntryAttributesC5valueAA0deF0Vvg
+    ldp x20, x30, [sp], #16
+    ret
+
+.globl _js_call_mergeable_entry_title_getter
+_js_call_mergeable_entry_title_getter:
+    stp x20, x30, [sp, #-16]!
+    mov x20, x0
+    mov x8, x1
+    bl _$s13JournalShared24MergeableEntryAttributesV5title9Coherence18CRAttributedStringVyAA0C19TitleAttributeScopeVGvg
     ldp x20, x30, [sp], #16
     ret
 

@@ -1,12 +1,17 @@
 import MarkwayCore
 import AppKit
+import CoreServices
+import Darwin
 import SwiftUI
 
 struct ContentView: View {
     @State private var vaultPath = UserDefaults.standard.string(forKey: "vaultPath") ?? ""
     @State private var bridgeStatus = "Bridge stopped."
     @State private var message = "Idle"
-    @State private var bridgeTimer: Timer?
+    @State private var bridgeWatcher: BridgeDirectoryWatcher?
+    @State private var journalWatcher: RecursiveDirectoryWatcher?
+    @State private var pendingBridgeProcess: DispatchWorkItem?
+    @State private var pendingJournalEvent: DispatchWorkItem?
     @State private var isProcessingBridge = false
 
     var body: some View {
@@ -21,7 +26,7 @@ struct ContentView: View {
                     scan()
                 }
                 .keyboardShortcut(.defaultAction)
-                Button(bridgeTimer == nil ? "Start bridge" : "Stop bridge") {
+                Button(bridgeWatcher == nil ? "Start bridge" : "Stop bridge") {
                     toggleBridge()
                 }
             }
@@ -55,10 +60,6 @@ struct ContentView: View {
         }
         .padding(24)
         .frame(minWidth: 560, minHeight: 260)
-        .onDisappear {
-            bridgeTimer?.invalidate()
-            bridgeTimer = nil
-        }
     }
 
     private func scan() {
@@ -82,10 +83,8 @@ struct ContentView: View {
     }
 
     private func toggleBridge() {
-        if let timer = bridgeTimer {
-            timer.invalidate()
-            bridgeTimer = nil
-            bridgeStatus = "Bridge stopped."
+        if bridgeWatcher != nil {
+            stopBridge()
             return
         }
 
@@ -95,13 +94,75 @@ struct ContentView: View {
         }
 
         UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
-        processBridge(vaultURL: vaultURL)
-        bridgeTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            Task { @MainActor in
-                processBridge(vaultURL: vaultURL)
+        do {
+            let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: NoopJournalBackend())
+            try bridge.prepare()
+            processBridge(vaultURL: vaultURL)
+            bridgeWatcher = try BridgeDirectoryWatcher(directoryURL: bridge.requestsURL) {
+                queueBridgeProcess(vaultURL: vaultURL)
             }
+            startJournalWatcher(vaultURL: vaultURL)
+            bridgeStatus = "Bridge started: \(bridge.bridgeURL.path)"
+        } catch {
+            message = String(describing: error)
         }
-        bridgeStatus = "Bridge started: \(vaultURL.appendingPathComponent(".markway").path)"
+    }
+
+    private func stopBridge() {
+        pendingBridgeProcess?.cancel()
+        pendingBridgeProcess = nil
+        pendingJournalEvent?.cancel()
+        pendingJournalEvent = nil
+        journalWatcher?.cancel()
+        journalWatcher = nil
+        bridgeWatcher?.cancel()
+        bridgeWatcher = nil
+        bridgeStatus = "Bridge stopped."
+    }
+
+    private func startJournalWatcher(vaultURL: URL) {
+        do {
+            let containerURL = Self.defaultJournalContainerURL()
+            journalWatcher = try RecursiveDirectoryWatcher(directoryURL: containerURL) {
+                queueJournalChangedEvent(vaultURL: vaultURL)
+            }
+        } catch {
+            message = "Bridge started, but Journal watcher could not start: \(error)"
+        }
+    }
+
+    private func queueBridgeProcess(vaultURL: URL) {
+        pendingBridgeProcess?.cancel()
+        let workItem = DispatchWorkItem {
+            pendingBridgeProcess = nil
+            processBridge(vaultURL: vaultURL)
+        }
+        pendingBridgeProcess = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
+    }
+
+    private func queueJournalChangedEvent(vaultURL: URL) {
+        pendingJournalEvent?.cancel()
+        let workItem = DispatchWorkItem {
+            emitJournalChangedEvent(vaultURL: vaultURL)
+        }
+        pendingJournalEvent = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
+    }
+
+    private func emitJournalChangedEvent(vaultURL: URL) {
+        guard pendingJournalEvent?.isCancelled == false else {
+            return
+        }
+        pendingJournalEvent = nil
+
+        do {
+            let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: NoopJournalBackend())
+            try bridge.emitEvent(kind: .journalChanged)
+            bridgeStatus = "Journal change queued for Obsidian."
+        } catch {
+            message = "Failed to queue Journal change: \(error)"
+        }
     }
 
     private func processBridge(vaultURL: URL) {
@@ -121,7 +182,7 @@ struct ContentView: View {
             let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: journal)
             let responses = try bridge.processPendingRequests()
             if responses.isEmpty {
-                bridgeStatus = "Bridge running: \(vaultURL.appendingPathComponent(".markway").path)"
+                bridgeStatus = "Bridge running: \(bridge.bridgeURL.path)"
             } else {
                 let successes = responses.filter(\.ok).count
                 message = "Processed \(responses.count) request(s), \(successes) ok."
@@ -205,12 +266,128 @@ struct ContentView: View {
             .appendingPathComponent("Helpers")
             .appendingPathComponent("journal_text")
     }
+
+    private static func defaultJournalContainerURL() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Group Containers", isDirectory: true)
+            .appendingPathComponent("group.com.apple.moments", isDirectory: true)
+    }
 }
 
 private struct NoopJournalBackend: JournalBackend {
     func list() throws -> [JournalEntrySummary] { [] }
     func add(title: String, bodyFile: URL) throws -> String { "" }
     func update(id: String, title: String, bodyFile: URL) throws {}
+    func delete(id: String) throws {}
     func get(id: String) throws -> JournalEntryText { JournalEntryText(id: id, title: "", body: "") }
+    func musicAttachments(id: String) throws -> [JournalMusicAttachment] { [] }
     func runRaw(_ arguments: [String]) throws -> String { "" }
+}
+
+private final class BridgeDirectoryWatcher {
+    private let source: DispatchSourceFileSystemObject
+    private var isCancelled = false
+
+    init(directoryURL: URL, handler: @escaping () -> Void) throws {
+        let descriptor = open(directoryURL.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .delete, .rename],
+            queue: .main
+        )
+        source.setEventHandler {
+            handler()
+        }
+        source.setCancelHandler {
+            close(descriptor)
+        }
+        source.resume()
+
+        self.source = source
+    }
+
+    func cancel() {
+        guard !isCancelled else {
+            return
+        }
+        isCancelled = true
+        source.cancel()
+    }
+
+    deinit {
+        cancel()
+    }
+}
+
+private final class RecursiveDirectoryWatcher {
+    private var stream: FSEventStreamRef?
+    private let handler: () -> Void
+
+    init(directoryURL: URL, handler: @escaping () -> Void) throws {
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue
+        else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+
+        self.handler = handler
+
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil,
+            release: nil,
+            copyDescription: nil
+        )
+        let flags = FSEventStreamCreateFlags(
+            kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer
+        )
+
+        guard let stream = FSEventStreamCreate(
+            kCFAllocatorDefault,
+            { _, info, _, _, _, _ in
+                guard let info else {
+                    return
+                }
+                let watcher = Unmanaged<RecursiveDirectoryWatcher>.fromOpaque(info).takeUnretainedValue()
+                watcher.handler()
+            },
+            &context,
+            [directoryURL.path] as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.5,
+            flags
+        ) else {
+            throw CocoaError(.fileReadUnknown)
+        }
+
+        self.stream = stream
+        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
+        guard FSEventStreamStart(stream) else {
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            self.stream = nil
+            throw CocoaError(.fileReadUnknown)
+        }
+    }
+
+    func cancel() {
+        guard let stream else {
+            return
+        }
+        FSEventStreamStop(stream)
+        FSEventStreamInvalidate(stream)
+        FSEventStreamRelease(stream)
+        self.stream = nil
+    }
+
+    deinit {
+        cancel()
+    }
 }

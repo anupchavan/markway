@@ -9,13 +9,18 @@ final class MarkwayFileBridgeTests: XCTestCase {
         try "Bridge body".write(to: note, atomically: true, encoding: .utf8)
 
         let backend = RecordingJournalBackend(nextID: "JOURNAL-ID")
-        let bridge = MarkwayFileBridge(vaultURL: temp, journal: backend)
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
         try bridge.prepare()
 
         let request = MarkwayBridgeRequest(
             id: "REQUEST-ID",
             kind: .journalPush,
-            filePath: note.path
+            relativePath: "Entry.md",
+            journalID: "EXISTING-ID"
         )
         let requestData = try JSONEncoder.markway.encode(request)
         try requestData.write(
@@ -27,17 +32,24 @@ final class MarkwayFileBridgeTests: XCTestCase {
 
         XCTAssertEqual(responses.count, 1)
         XCTAssertEqual(responses.first?.ok, true)
-        XCTAssertEqual(responses.first?.journalID, "JOURNAL-ID")
-        XCTAssertEqual(backend.addCalls.count, 1)
+        XCTAssertEqual(responses.first?.journalID, "EXISTING-ID")
+        XCTAssertEqual(backend.addCalls.count, 0)
+        XCTAssertEqual(backend.updateCalls.count, 1)
+        XCTAssertEqual(backend.updateCalls.first?.id, "EXISTING-ID")
         XCTAssertFalse(FileManager.default.fileExists(atPath: bridge.requestsURL.appendingPathComponent("REQUEST-ID.json").path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: bridge.responsesURL.appendingPathComponent("REQUEST-ID.json").path))
         XCTAssertEqual(try String(contentsOf: note), "Bridge body")
+        XCTAssertFalse(bridge.bridgeURL.path.hasPrefix(temp.appendingPathComponent(".markway").path))
     }
 
     func testProcessesDoctorRequestThroughBackend() throws {
         let temp = try temporaryDirectory()
         let backend = RecordingJournalBackend(nextID: "UNUSED")
-        let bridge = MarkwayFileBridge(vaultURL: temp, journal: backend)
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
         try bridge.prepare()
 
         let request = MarkwayBridgeRequest(id: "DOCTOR-ID", kind: .doctor)
@@ -51,6 +63,189 @@ final class MarkwayFileBridgeTests: XCTestCase {
 
         XCTAssertEqual(responses.first?.ok, true)
         XCTAssertEqual(backend.rawCalls, [["sync-status"]])
+    }
+
+    func testEmitsPrivateBridgeEvent() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+
+        try bridge.emitEvent(kind: .journalChanged)
+
+        let eventFiles = try FileManager.default.contentsOfDirectory(
+            at: bridge.eventsURL,
+            includingPropertiesForKeys: nil
+        )
+        XCTAssertEqual(eventFiles.count, 1)
+
+        let eventData = try Data(contentsOf: eventFiles[0])
+        let event = try JSONDecoder.markway.decode(MarkwayBridgeEvent.self, from: eventData)
+        XCTAssertEqual(event.kind, .journalChanged)
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: eventFiles[0].path)
+        let permissions = attributes[.posixPermissions] as? NSNumber
+        XCTAssertEqual(permissions?.intValue, 0o600)
+    }
+
+    func testListsAndReadsJournalEntriesThroughBackend() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.listResults = [
+            JournalEntrySummary(id: "ENTRY-ID", status: "active", created: "2026-06-05T00:00:00Z", title: "Title")
+        ]
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let listRequest = MarkwayBridgeRequest(id: "LIST-ID", kind: .journalList)
+        try JSONEncoder.markway.encode(listRequest).write(
+            to: bridge.requestsURL.appendingPathComponent("LIST-ID.json"),
+            options: .atomic
+        )
+        let getRequest = MarkwayBridgeRequest(id: "GET-ID", kind: .journalGet, journalID: "ENTRY-ID")
+        try JSONEncoder.markway.encode(getRequest).write(
+            to: bridge.requestsURL.appendingPathComponent("GET-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+        let responsesByID = Dictionary(uniqueKeysWithValues: responses.map { ($0.id, $0) })
+
+        XCTAssertEqual(responses.count, 2)
+        XCTAssertEqual(responsesByID["LIST-ID"]?.entries?.first?.id, "ENTRY-ID")
+        XCTAssertEqual(responsesByID["GET-ID"]?.entry?.id, "ENTRY-ID")
+        XCTAssertEqual(responsesByID["GET-ID"]?.entry?.body, "Body")
+    }
+
+    func testCanReadJournalEntryWithMusicAttachments() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.musicResults = [
+            JournalMusicAttachment(id: "MUSIC-ID", song: "Song title", artistName: "Artist", mediaId: "MEDIA-ID")
+        ]
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let getRequest = MarkwayBridgeRequest(
+            id: "GET-MUSIC-ID",
+            kind: .journalGet,
+            journalID: "ENTRY-ID",
+            includeMusicAttachments: true
+        )
+        try JSONEncoder.markway.encode(getRequest).write(
+            to: bridge.requestsURL.appendingPathComponent("GET-MUSIC-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.entry?.musicAttachments.first?.song, "Song title")
+        XCTAssertEqual(responses.first?.entry?.musicAttachments.first?.mediaId, "MEDIA-ID")
+        XCTAssertEqual(backend.musicCalls, ["ENTRY-ID"])
+    }
+
+    func testProcessesJournalPullRequestThroughBackend() throws {
+        let temp = try temporaryDirectory()
+        let note = temp.appendingPathComponent("Pulled.md")
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "PULL-ID",
+            kind: .journalPull,
+            relativePath: "Pulled.md",
+            journalID: "ENTRY-ID"
+        )
+        let requestData = try JSONEncoder.markway.encode(request)
+        try requestData.write(
+            to: bridge.requestsURL.appendingPathComponent("PULL-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(responses.first?.journalID, "ENTRY-ID")
+        let pulled = try MarkdownDocument.read(from: note)
+        XCTAssertEqual(pulled[MarkwayMetadataKey.appleJournalID], "ENTRY-ID")
+        XCTAssertEqual(pulled[MarkwayMetadataKey.title], "Title")
+        XCTAssertEqual(pulled.body, "Body")
+    }
+
+    func testProcessesJournalDeleteRequestThroughBackend() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "DELETE-ID",
+            kind: .journalDelete,
+            journalID: "ENTRY-ID"
+        )
+        let requestData = try JSONEncoder.markway.encode(request)
+        try requestData.write(
+            to: bridge.requestsURL.appendingPathComponent("DELETE-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(responses.first?.journalID, "ENTRY-ID")
+        XCTAssertEqual(backend.deleteCalls, ["ENTRY-ID"])
+    }
+
+    func testRejectsBridgeRequestPathOutsideVault() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "ESCAPE-ID",
+            kind: .journalPull,
+            relativePath: "../outside.md",
+            journalID: "ENTRY-ID"
+        )
+        let requestData = try JSONEncoder.markway.encode(request)
+        try requestData.write(
+            to: bridge.requestsURL.appendingPathComponent("ESCAPE-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.ok, false)
+        XCTAssertTrue(responses.first?.message.contains("escapes the vault") == true)
     }
 
     private func temporaryDirectory() throws -> URL {

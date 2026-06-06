@@ -34,17 +34,25 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
         self.clock = clock
     }
 
-    public func pushMarkdownFile(_ fileURL: URL, title explicitTitle: String? = nil, writeMetadata: Bool = true) throws -> String {
+    public func pushMarkdownFile(
+        _ fileURL: URL,
+        title explicitTitle: String? = nil,
+        existingID explicitExistingID: String? = nil,
+        writeMetadata: Bool = true,
+        stripTitleHeading: Bool = false
+    ) throws -> String {
         var document = try MarkdownDocument.read(from: fileURL)
         let title = explicitTitle
             ?? document[MarkwayMetadataKey.title]
             ?? fileURL.deletingPathExtension().lastPathComponent
 
-        let bodyURL = try writeTemporaryBody(document.body)
+        let body = stripTitleHeading ? Self.stripGeneratedTitleHeading(from: document.body, title: title) : document.body
+        let bodyURL = try writeTemporaryBody(body)
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 
         let id: String
-        if let existingID = document[MarkwayMetadataKey.appleJournalID], !existingID.isEmpty {
+        let existingID = explicitExistingID ?? document[MarkwayMetadataKey.appleJournalID]
+        if let existingID, !existingID.isEmpty {
             try journal.update(id: existingID, title: title, bodyFile: bodyURL)
             id = existingID
         } else {
@@ -62,13 +70,19 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
 
     public func pullJournalEntry(id: String, to fileURL: URL) throws {
         let entry = try journal.get(id: id)
+        let existingDocument = FileManager.default.fileExists(atPath: fileURL.path)
+            ? try MarkdownDocument.read(from: fileURL)
+            : nil
+        var frontmatter = existingDocument?.frontmatter ?? [:]
+        frontmatter[MarkwayMetadataKey.appleJournalID] = entry.id
+        frontmatter[MarkwayMetadataKey.title] = entry.title
+        frontmatter[MarkwayMetadataKey.lastSyncedAt] = ISO8601DateFormatter().string(from: clock())
+        let body = existingDocument.map {
+            MarkdownStructurePreserver.preserve(existingBody: $0.body, journalBody: entry.body)
+        } ?? entry.body
         let document = MarkdownDocument(
-            frontmatter: [
-                MarkwayMetadataKey.appleJournalID: entry.id,
-                MarkwayMetadataKey.title: entry.title,
-                MarkwayMetadataKey.lastSyncedAt: ISO8601DateFormatter().string(from: clock())
-            ],
-            body: entry.body
+            frontmatter: frontmatter,
+            body: body
         )
         try FileManager.default.createDirectory(
             at: fileURL.deletingLastPathComponent(),
@@ -129,5 +143,252 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
 
     private var excludedDirectoryNames: Set<String> {
         [".git", ".markway", ".obsidian", "node_modules"]
+    }
+
+    static func stripGeneratedTitleHeading(from body: String, title: String) -> String {
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedTitle.isEmpty else {
+            return body
+        }
+
+        let normalizedBody = body.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let heading = "# \(normalizedTitle)"
+        guard normalizedBody == heading || normalizedBody.hasPrefix("\(heading)\n") else {
+            return body
+        }
+
+        var remainder = String(normalizedBody.dropFirst(heading.count))
+        if remainder.hasPrefix("\n\n") {
+            remainder.removeFirst(2)
+        } else if remainder.hasPrefix("\n") {
+            remainder.removeFirst()
+        }
+        return remainder
+    }
+}
+
+enum MarkdownStructurePreserver {
+    static func preserve(existingBody: String, journalBody: String) -> String {
+        guard existingBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return journalBody
+        }
+
+        let existing = normalizedLines(existingBody)
+        let journal = normalizedLines(journalBody)
+        var output: [String] = []
+        var existingIndex = 0
+        var journalIndex = 0
+
+        while existingIndex < existing.count {
+            let existingLine = existing[existingIndex]
+
+            if isBlank(existingLine) {
+                if journal.indices.contains(journalIndex), isBlank(journal[journalIndex]) {
+                    output.append(journal[journalIndex])
+                    journalIndex += 1
+                } else {
+                    output.append(existingLine)
+                }
+                existingIndex += 1
+                continue
+            }
+
+            if isFenceStart(existingLine) {
+                let block = collectFencedBlock(lines: existing, start: existingIndex)
+                let journalCode = takeJournalCodeBlock(lines: journal, start: journalIndex, fallbackLength: block.content.count)
+                output.append(block.opening)
+                output.append(contentsOf: journalCode.lines)
+                output.append(block.closing)
+                journalIndex = journalCode.nextIndex
+                existingIndex = block.nextIndex
+                continue
+            }
+
+            let journalLine = takeJournalContentLine(lines: journal, start: journalIndex)
+            let current = journalLine.line ?? existingLine
+            journalIndex = journalLine.nextIndex
+
+            if let heading = firstMatch(#"^(\s{0,3})(#{1,6})\s+(.*)$"#, in: existingLine) {
+                output.append("\(heading[1])\(heading[2]) \(markdownLineText(current))")
+                existingIndex += 1
+                continue
+            }
+
+            if let quote = firstMatch(#"^(\s{0,3}>\s?)(.*)$"#, in: existingLine) {
+                output.append("\(quote[1])\(markdownLineText(current))")
+                existingIndex += 1
+                continue
+            }
+
+            if isThematicBreak(existingLine) {
+                if isThematicBreak(current) {
+                    journalIndex = journalLine.nextIndex
+                } else {
+                    journalIndex = journalLine.startIndex
+                }
+                output.append(existingLine)
+                existingIndex += 1
+                continue
+            }
+
+            let list = firstMatch(#"^(\s*)((?:[-*+])|(?:\d+[.)]))\s+(.*)$"#, in: existingLine)
+            let currentIsList = firstMatch(#"^(\s*)((?:[-*+])|(?:\d+[.)]))\s+"#, in: current) != nil
+            if let list, !currentIsList {
+                output.append("\(list[1])\(list[2]) \(markdownLineText(current))")
+                existingIndex += 1
+                continue
+            }
+
+            output.append(current)
+            existingIndex += 1
+        }
+
+        if journalIndex < journal.count {
+            output.append(contentsOf: journal[journalIndex...])
+        }
+
+        return output.joined(separator: "\n")
+    }
+
+    private struct FencedBlock {
+        var opening: String
+        var closing: String
+        var content: [String]
+        var nextIndex: Int
+    }
+
+    private struct LineTake {
+        var line: String?
+        var startIndex: Int
+        var nextIndex: Int
+    }
+
+    private static func normalizedLines(_ value: String) -> [String] {
+        value
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+    }
+
+    private static func isBlank(_ line: String) -> Bool {
+        line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private static func isFenceStart(_ line: String) -> Bool {
+        firstMatch(#"^ {0,3}(`{3,}|~{3,})"#, in: line) != nil
+    }
+
+    private static func isFenceClose(_ line: String, opener: String) -> Bool {
+        let trimmed = opener.trimmingCharacters(in: .whitespaces)
+        let marker = trimmed.hasPrefix("~") ? "~" : "`"
+        let count = max(3, trimmed.prefix { String($0) == marker }.count)
+        return firstMatch("^ {0,3}\(NSRegularExpression.escapedPattern(for: String(repeating: marker, count: count)))\\s*$", in: line) != nil
+    }
+
+    private static func collectFencedBlock(lines: [String], start: Int) -> FencedBlock {
+        let opening = lines.indices.contains(start) ? lines[start] : "```"
+        var content: [String] = []
+        var index = start + 1
+        while index < lines.count {
+            let line = lines[index]
+            if isFenceClose(line, opener: opening) {
+                return FencedBlock(opening: opening, closing: line, content: content, nextIndex: index + 1)
+            }
+            content.append(line)
+            index += 1
+        }
+        return FencedBlock(opening: opening, closing: opening.trimmingCharacters(in: .whitespaces).hasPrefix("~") ? "~~~" : "```", content: content, nextIndex: index)
+    }
+
+    private static func takeJournalCodeBlock(lines: [String], start: Int, fallbackLength: Int) -> (lines: [String], nextIndex: Int) {
+        var index = skipBlankLines(lines: lines, start: start)
+        if lines.indices.contains(index), isFenceStart(lines[index]) {
+            let block = collectFencedBlock(lines: lines, start: index)
+            return (block.content, block.nextIndex)
+        }
+
+        var content: [String] = []
+        let length = max(1, fallbackLength)
+        while index < lines.count, content.count < length {
+            let line = lines[index]
+            if isBlank(line), !content.isEmpty {
+                break
+            }
+            content.append(line)
+            index += 1
+        }
+        return (content, index)
+    }
+
+    private static func takeJournalContentLine(lines: [String], start: Int) -> LineTake {
+        let contentIndex = skipBlankLines(lines: lines, start: start)
+        guard lines.indices.contains(contentIndex) else {
+            return LineTake(line: nil, startIndex: start, nextIndex: contentIndex)
+        }
+        return LineTake(line: lines[contentIndex], startIndex: contentIndex, nextIndex: contentIndex + 1)
+    }
+
+    private static func skipBlankLines(lines: [String], start: Int) -> Int {
+        var index = start
+        while lines.indices.contains(index), isBlank(lines[index]) {
+            index += 1
+        }
+        return index
+    }
+
+    private static func markdownLineText(_ line: String) -> String {
+        var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let heading = firstMatch(#"^#{1,6}\s+(.*)$"#, in: text) {
+            text = heading[1]
+        }
+        if let quote = firstMatch(#"^>\s?(.*)$"#, in: text) {
+            text = quote[1]
+        }
+        if let list = firstMatch(#"^((?:[-*+])|(?:\d+[.)]))\s+(.*)$"#, in: text) {
+            text = list[2]
+        }
+
+        let wrappers = [
+            #"^\*\*\*(.*)\*\*\*$"#,
+            #"^___(.*)___$"#,
+            #"^\*\*(.*)\*\*$"#,
+            #"^__(.*)__$"#,
+            #"^\*(.*)\*$"#,
+            #"^_(.*)_$"#,
+            #"^`(.*)`$"#,
+        ]
+        var changed = true
+        while changed {
+            changed = false
+            for wrapper in wrappers {
+                if let match = firstMatch(wrapper, in: text) {
+                    text = match[1]
+                    changed = true
+                }
+            }
+        }
+        return text
+    }
+
+    private static func isThematicBreak(_ line: String) -> Bool {
+        firstMatch(#"^ {0,3}((?:-\s*){3,}|(?:_\s*){3,}|(?:\*\s*){3,})$"#, in: line) != nil
+    }
+
+    private static func firstMatch(_ pattern: String, in text: String) -> [String]? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: nsRange) else {
+            return nil
+        }
+        return (0..<match.numberOfRanges).map { index in
+            let range = match.range(at: index)
+            guard range.location != NSNotFound, let stringRange = Range(range, in: text) else {
+                return ""
+            }
+            return String(text[stringRange])
+        }
     }
 }

@@ -26,6 +26,10 @@ let package = Package(
         .testTarget(
             name: "MarkwayCoreTests",
             dependencies: ["MarkwayCore"]
+        ),
+        .testTarget(
+            name: "MarkwayCLITests",
+            dependencies: ["MarkwayCLI", "MarkwayCore"]
         )
     ]
 )

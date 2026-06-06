@@ -45,6 +45,21 @@ final class MarkwaySyncEngineTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: backend.updateCalls.first!.bodyFile), "Updated body")
     }
 
+    func testPushCanUseExistingIDOutsideFrontmatter() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try "Updated body".write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let engine = MarkwaySyncEngine(journal: backend, clock: { Date(timeIntervalSince1970: 0) })
+        let id = try engine.pushMarkdownFile(file, title: "New", existingID: "EXISTING")
+
+        XCTAssertEqual(id, "EXISTING")
+        XCTAssertEqual(backend.addCalls.count, 0)
+        XCTAssertEqual(backend.updateCalls.count, 1)
+        XCTAssertEqual(try String(contentsOf: backend.updateCalls.first!.bodyFile), "Updated body")
+    }
+
     func testPushCanLeaveFrontmatterForCallerToWrite() throws {
         let temp = try temporaryDirectory()
         let file = temp.appendingPathComponent("Entry.md")
@@ -56,6 +71,137 @@ final class MarkwaySyncEngineTests: XCTestCase {
 
         XCTAssertEqual(id, "ENTRY-ID")
         XCTAssertEqual(try String(contentsOf: file), "Hello")
+    }
+
+    func testPushCanStripGeneratedTitleHeading() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try """
+        # Entry
+
+        Body
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "ENTRY-ID")
+        let engine = MarkwaySyncEngine(journal: backend)
+
+        _ = try engine.pushMarkdownFile(file, title: "Entry", writeMetadata: false, stripTitleHeading: true)
+
+        XCTAssertEqual(try String(contentsOf: backend.addCalls.first!.bodyFile), "Body")
+    }
+
+    func testPushDoesNotStripUnrelatedHeading() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try """
+        # Different
+
+        Body
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "ENTRY-ID")
+        let engine = MarkwaySyncEngine(journal: backend)
+
+        _ = try engine.pushMarkdownFile(file, title: "Entry", writeMetadata: false, stripTitleHeading: true)
+
+        XCTAssertEqual(try String(contentsOf: backend.addCalls.first!.bodyFile), "# Different\n\nBody")
+    }
+
+    func testPullPreservesMarkdownStructureWhenJournalNormalizesTextAttributes() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try """
+        ---
+        custom: "keep"
+        ---
+        ui maa **bold** *italic*
+
+        ## ok
+
+        - item 1
+
+        1. two
+        1. three
+        1. four
+
+        ```
+        const ok = "strong"
+        ```
+
+        > Take me back to the night we met
+
+        --------
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.getResults["ENTRY-ID"] = JournalEntryText(
+            id: "ENTRY-ID",
+            title: "Entry",
+            body: """
+            ui maa **bold** *italic*
+
+            **okidoki**
+
+            - item 1
+
+            1. two
+            1. three
+            1. four
+
+            const ok = "strong"
+
+            Take me back to the night we met
+            """
+        )
+        let engine = MarkwaySyncEngine(journal: backend, clock: { Date(timeIntervalSince1970: 0) })
+
+        try engine.pullJournalEntry(id: "ENTRY-ID", to: file)
+
+        let document = try MarkdownDocument.read(from: file)
+        XCTAssertEqual(document["custom"], "keep")
+        XCTAssertEqual(document[MarkwayMetadataKey.appleJournalID], "ENTRY-ID")
+        XCTAssertEqual(document.body, """
+        ui maa **bold** *italic*
+
+        ## okidoki
+
+        - item 1
+
+        1. two
+        1. three
+        1. four
+
+        ```
+        const ok = "strong"
+        ```
+
+        > Take me back to the night we met
+
+        --------
+        """)
+    }
+
+    func testPullPreservesExistingFenceLanguage() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try """
+        ```js
+        const ok = 1
+        ```
+        """.write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.getResults["ENTRY-ID"] = JournalEntryText(id: "ENTRY-ID", title: "Entry", body: "const ok = 2")
+        let engine = MarkwaySyncEngine(journal: backend)
+
+        try engine.pullJournalEntry(id: "ENTRY-ID", to: file)
+
+        let document = try MarkdownDocument.read(from: file)
+        XCTAssertEqual(document.body, """
+        ```js
+        const ok = 2
+        ```
+        """)
     }
 
     func testScanVaultPlansCreatesAndUpdates() throws {
@@ -100,7 +246,12 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
 
     var addCalls: [AddCall] = []
     var updateCalls: [UpdateCall] = []
+    var deleteCalls: [String] = []
     var rawCalls: [[String]] = []
+    var listResults: [JournalEntrySummary] = []
+    var musicResults: [JournalMusicAttachment] = []
+    var musicCalls: [String] = []
+    var getResults: [String: JournalEntryText] = [:]
     let nextID: String
 
     init(nextID: String) {
@@ -118,12 +269,24 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
         updateCalls.append(UpdateCall(id: id, title: title, bodyFile: copied))
     }
 
+    func delete(id: String) throws {
+        deleteCalls.append(id)
+    }
+
     func get(id: String) throws -> JournalEntryText {
-        JournalEntryText(id: id, title: "Title", body: "Body")
+        if let result = getResults[id] {
+            return result
+        }
+        return JournalEntryText(id: id, title: "Title", body: "Body")
     }
 
     func list() throws -> [JournalEntrySummary] {
-        []
+        listResults
+    }
+
+    func musicAttachments(id: String) throws -> [JournalMusicAttachment] {
+        musicCalls.append(id)
+        return musicResults
     }
 
     func runRaw(_ arguments: [String]) throws -> String {

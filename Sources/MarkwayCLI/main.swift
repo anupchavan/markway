@@ -272,7 +272,9 @@ struct NoopJournalBackend: JournalBackend {
     func list() throws -> [JournalEntrySummary] { [] }
     func add(title: String, bodyFile: URL) throws -> String { "" }
     func update(id: String, title: String, bodyFile: URL) throws {}
+    func delete(id: String) throws {}
     func get(id: String) throws -> JournalEntryText { JournalEntryText(id: id, title: "", body: "") }
+    func musicAttachments(id: String) throws -> [JournalMusicAttachment] { [] }
     func runRaw(_ arguments: [String]) throws -> String { "" }
 }
 

@@ -91,8 +91,20 @@ func jsShimDestroySwiftValue(_ valueAddress: UnsafeMutableRawPointer, _ metadata
 @_silgen_name("js_call_cr_attributed_string_to_ns_text")
 func jsShimCRToNSText(_ valueAddress: UnsafeMutableRawPointer) -> NSAttributedString
 
+@_silgen_name("js_call_cr_attributed_string_count")
+func jsShimCRAttributedStringCount(_ valueAddress: UnsafeMutableRawPointer) -> Int
+
+@_silgen_name("js_call_cr_attributed_string_remove_range")
+func jsShimCRAttributedStringRemoveRange(_ valueAddress: UnsafeMutableRawPointer, _ lowerBound: Int, _ upperBound: Int)
+
+@_silgen_name("js_call_cr_attributed_string_insert_ns")
+func jsShimCRAttributedStringInsertNS(_ valueAddress: UnsafeMutableRawPointer, _ attributed: NSAttributedString, _ index: Int)
+
 @_silgen_name("js_call_wrapped_mergeable_entry_attributes_value")
 func jsShimWrappedMergeableEntryAttributesValue(_ wrapper: NSObject, _ valueAddress: UnsafeMutableRawPointer)
+
+@_silgen_name("js_call_mergeable_entry_title_getter")
+func jsShimMergeableEntryTitleGetter(_ entryAddress: UnsafeMutableRawPointer, _ valueAddress: UnsafeMutableRawPointer)
 
 @_silgen_name("js_call_mergeable_entry_text_getter")
 func jsShimMergeableEntryTextGetter(_ entryAddress: UnsafeMutableRawPointer, _ valueAddress: UnsafeMutableRawPointer)
@@ -174,6 +186,7 @@ func usage() -> String {
       journal_text sync-status [UUID] [--store PATH]
       journal_text queue-upload UUID [--store PATH]
       journal_text debug-attrs UUID [--store PATH]
+      journal_text debug-markdown --body BODY.md
       journal_text attachments types [--store PATH]
       journal_text attachments list UUID [--store PATH] [--attachment-root PATH] [--json]
       journal_text attachments export UUID --out DIR [--store PATH] [--attachment-root PATH]
@@ -272,6 +285,7 @@ func makeContext(storePath: String, readOnly: Bool) throws -> NSManagedObjectCon
         NSInferMappingModelAutomaticallyOption: true,
         NSMigratePersistentStoresAutomaticallyOption: true,
         NSPersistentHistoryTrackingKey: true,
+        NSPersistentStoreRemoteChangeNotificationPostOptionKey: true,
     ]
     if readOnly {
         options[NSReadOnlyPersistentStoreOption] = true
@@ -480,6 +494,53 @@ func makeMergeableAttributes(title: NSAttributedString, text: NSAttributedString
     }
 }
 
+func makeReplacingMergeableAttributes(title: NSAttributedString, text: NSAttributedString, from wrapper: NSObject?) throws -> NSObject {
+    guard let wrapper else {
+        return try makeMergeableAttributes(title: title, text: text)
+    }
+
+    var value = MergeableEntryAttributesOpaque()
+    let crTitle = SwiftValueBuffer(metadata: jsShimCRTitleMetadata())
+    let crText = SwiftValueBuffer(metadata: jsShimCRTextMetadata())
+
+    withUnsafeMutableBytes(of: &value) { raw in
+        jsShimWrappedMergeableEntryAttributesValue(wrapper, raw.baseAddress!)
+        jsShimMergeableEntryTitleGetter(raw.baseAddress!, crTitle.pointer)
+        jsShimMergeableEntryTextGetter(raw.baseAddress!, crText.pointer)
+    }
+    crTitle.markInitialized()
+    crText.markInitialized()
+
+    replaceCRAttributedString(crTitle, with: title)
+    replaceCRAttributedString(crText, with: text)
+    #if targetEnvironment(macCatalyst)
+    richTextConverter?.applyTextAttributes(from: text, to: crText.pointer)
+    #endif
+
+    withUnsafeMutableBytes(of: &value) { raw in
+        jsShimMergeTitle(crTitle.pointer, raw.baseAddress!)
+        jsShimMergeText(crText.pointer, raw.baseAddress!)
+    }
+
+    crTitle.destroy()
+    crText.destroy()
+
+    let wrapperMetadata = jsWrappedMergeableEntryAttributesMetadata(0)
+    return withUnsafeMutableBytes(of: &value) { raw in
+        jsShimWrapMergeableEntryAttributes(raw.baseAddress!, wrapperMetadata)
+    }
+}
+
+func replaceCRAttributedString(_ crAttributedString: SwiftValueBuffer, with attributed: NSAttributedString) {
+    let count = jsShimCRAttributedStringCount(crAttributedString.pointer)
+    if count > 0 {
+        jsShimCRAttributedStringRemoveRange(crAttributedString.pointer, 0, count)
+    }
+    if attributed.length > 0 {
+        jsShimCRAttributedStringInsertNS(crAttributedString.pointer, attributed, 0)
+    }
+}
+
 func attributes(font: PlatformFont, extra: [NSAttributedString.Key: Any] = [:]) -> [NSAttributedString.Key: Any] {
     var result: [NSAttributedString.Key: Any] = [.font: font]
     for (key, value) in extra {
@@ -597,9 +658,8 @@ func parseInlineMarkdown(_ markdown: String, baseSize: CGFloat, extra: [NSAttrib
            let closeParen = find(")", from: closeBracket + 2) {
             let label = String(chars[(index + 1)..<closeBracket])
             let urlText = String(chars[(closeBracket + 2)..<closeParen])
-            if URL(string: urlText) != nil {
-                let rendered = label == urlText ? urlText : "\(label) (\(urlText))"
-                append(rendered, style: InlineStyle())
+            if let url = URL(string: urlText), url.scheme != nil {
+                append(label, style: InlineStyle(link: url))
                 index = closeParen + 1
                 continue
             }
@@ -740,6 +800,228 @@ func markdownAttributedString(_ markdown: String) -> NSAttributedString {
     return output
 }
 
+struct MarkdownFontTraits {
+    var pointSize: CGFloat = 15
+    var bold = false
+    var italic = false
+    var monospace = false
+}
+
+func markdownFontTraits(_ attrs: [NSAttributedString.Key: Any]) -> MarkdownFontTraits {
+    guard let font = attrs[.font] as? PlatformFont else {
+        return MarkdownFontTraits()
+    }
+
+    #if targetEnvironment(macCatalyst)
+    let symbolicTraits = font.fontDescriptor.symbolicTraits
+    return MarkdownFontTraits(
+        pointSize: font.pointSize,
+        bold: symbolicTraits.contains(.traitBold),
+        italic: symbolicTraits.contains(.traitItalic),
+        monospace: symbolicTraits.contains(.traitMonoSpace)
+    )
+    #else
+    let fontManagerTraits = NSFontManager.shared.traits(of: font)
+    let symbolicTraits = font.fontDescriptor.symbolicTraits
+    return MarkdownFontTraits(
+        pointSize: font.pointSize,
+        bold: fontManagerTraits.contains(.boldFontMask),
+        italic: fontManagerTraits.contains(.italicFontMask),
+        monospace: symbolicTraits.contains(.monoSpace)
+    )
+    #endif
+}
+
+func markdownLineAttributes(_ attributed: NSAttributedString, lineRange: NSRange) -> [NSAttributedString.Key: Any] {
+    if lineRange.length > 0 {
+        return attributed.attributes(at: lineRange.location, effectiveRange: nil)
+    }
+    if lineRange.location < attributed.length {
+        return attributed.attributes(at: lineRange.location, effectiveRange: nil)
+    }
+    if attributed.length > 0 {
+        return attributed.attributes(at: attributed.length - 1, effectiveRange: nil)
+    }
+    return [:]
+}
+
+func markdownParagraphStyle(_ attrs: [NSAttributedString.Key: Any]) -> NSParagraphStyle? {
+    attrs[.paragraphStyle] as? NSParagraphStyle
+}
+
+func markdownListPrefix(_ attrs: [NSAttributedString.Key: Any]) -> String? {
+    guard let list = markdownParagraphStyle(attrs)?.textLists.first else {
+        return nil
+    }
+    return list.markerFormat == .decimal ? "1. " : "- "
+}
+
+func isMarkdownCodeBlockLine(_ attrs: [NSAttributedString.Key: Any]) -> Bool {
+    let traits = markdownFontTraits(attrs)
+    let paragraphStyle = markdownParagraphStyle(attrs)
+    return traits.monospace
+        && attrs[.backgroundColor] != nil
+        && (paragraphStyle?.textLists.isEmpty ?? true)
+        && (paragraphStyle?.headIndent ?? 0) >= 12
+}
+
+func isMarkdownBlockQuoteLine(_ attrs: [NSAttributedString.Key: Any]) -> Bool {
+    if (attrs[NSAttributedString.Key("blockQuote")] as? Bool) == true {
+        return true
+    }
+    guard let paragraphStyle = markdownParagraphStyle(attrs),
+          paragraphStyle.textLists.isEmpty,
+          attrs[.backgroundColor] == nil else {
+        return false
+    }
+    return paragraphStyle.headIndent >= 18
+}
+
+func markdownHeadingPrefix(_ attributed: NSAttributedString, lineRange: NSRange) -> String? {
+    guard lineRange.length > 0 else {
+        return nil
+    }
+
+    var sawText = false
+    var minimumSize = CGFloat.greatestFiniteMagnitude
+    var allBold = true
+    attributed.enumerateAttributes(in: lineRange, options: []) { attrs, range, _ in
+        let text = (attributed.string as NSString).substring(with: range)
+        guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+            return
+        }
+        let traits = markdownFontTraits(attrs)
+        sawText = true
+        minimumSize = min(minimumSize, traits.pointSize)
+        allBold = allBold && traits.bold
+    }
+
+    guard sawText, allBold, minimumSize >= 16.5 else {
+        return nil
+    }
+
+    if minimumSize >= 21.5 { return "# " }
+    if minimumSize >= 19.5 { return "## " }
+    if minimumSize >= 17.5 { return "### " }
+    return "#### "
+}
+
+func markdownLinkTarget(_ value: Any?) -> String? {
+    if let url = value as? URL {
+        return url.absoluteString
+    }
+    if let url = value as? NSURL {
+        return url.absoluteString
+    }
+    if let string = value as? String, !string.isEmpty {
+        return string
+    }
+    return nil
+}
+
+func markdownEscapedCode(_ text: String) -> String {
+    if text.contains("`") == false {
+        return "`\(text)`"
+    }
+    return "`` \(text.replacingOccurrences(of: "``", with: "` `")) ``"
+}
+
+func markdownInlineString(
+    _ attributed: NSAttributedString,
+    lineRange: NSRange,
+    suppressFontStyles: Bool = false
+) -> String {
+    guard lineRange.length > 0 else {
+        return ""
+    }
+
+    let nsString = attributed.string as NSString
+    var output = ""
+    attributed.enumerateAttributes(in: lineRange, options: []) { attrs, range, _ in
+        let text = nsString.substring(with: range)
+        guard text.isEmpty == false else {
+            return
+        }
+
+        let hasContent = text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let traits = markdownFontTraits(attrs)
+        var rendered = text
+
+        if let link = markdownLinkTarget(attrs[.link]), hasContent {
+            rendered = "[\(rendered)](\(link))"
+        } else if traits.monospace, attrs[.backgroundColor] != nil, hasContent {
+            rendered = markdownEscapedCode(rendered)
+        } else if !suppressFontStyles && traits.bold && traits.italic && hasContent {
+            rendered = "***\(rendered)***"
+        } else if !suppressFontStyles && traits.bold && hasContent {
+            rendered = "**\(rendered)**"
+        } else if !suppressFontStyles && traits.italic && hasContent {
+            rendered = "*\(rendered)*"
+        }
+
+        output += rendered
+    }
+    return output
+}
+
+func markdownLineString(_ attributed: NSAttributedString, lineRange: NSRange) -> String {
+    let attrs = markdownLineAttributes(attributed, lineRange: lineRange)
+
+    if let headingPrefix = markdownHeadingPrefix(attributed, lineRange: lineRange) {
+        let inline = markdownInlineString(attributed, lineRange: lineRange, suppressFontStyles: true)
+        return headingPrefix + inline
+    }
+
+    let inline = markdownInlineString(attributed, lineRange: lineRange)
+    if let listPrefix = markdownListPrefix(attrs) {
+        return listPrefix + inline
+    }
+    if isMarkdownBlockQuoteLine(attrs) {
+        return "> " + inline
+    }
+    return inline
+}
+
+func markdownString(_ attributed: NSAttributedString) -> String {
+    let text = attributed.string
+    guard text.isEmpty == false else {
+        return ""
+    }
+
+    let lines = text.components(separatedBy: "\n")
+    var lineRanges: [NSRange] = []
+    var location = 0
+    for line in lines {
+        let length = (line as NSString).length
+        lineRanges.append(NSRange(location: location, length: length))
+        location += length + 1
+    }
+
+    var outputLines: [String] = []
+    var index = 0
+    while index < lineRanges.count {
+        let attrs = markdownLineAttributes(attributed, lineRange: lineRanges[index])
+        if isMarkdownCodeBlockLine(attrs) {
+            outputLines.append("```")
+            while index < lineRanges.count {
+                let codeAttrs = markdownLineAttributes(attributed, lineRange: lineRanges[index])
+                guard isMarkdownCodeBlockLine(codeAttrs) else {
+                    break
+                }
+                outputLines.append((text as NSString).substring(with: lineRanges[index]))
+                index += 1
+            }
+            outputLines.append("```")
+            continue
+        }
+
+        outputLines.append(markdownLineString(attributed, lineRange: lineRanges[index]))
+        index += 1
+    }
+
+    return outputLines.joined(separator: "\n")
+}
+
 func fetchEntry(context: NSManagedObjectContext, uuidString: String) throws -> NSManagedObject {
     guard let uuid = UUID(uuidString: uuidString) else {
         throw ToolError.invalid("invalid UUID: \(uuidString)")
@@ -768,7 +1050,10 @@ func applyText(entry: NSManagedObject, title: NSAttributedString, body: NSAttrib
     entry.setValue(try rtfData(body), forKey: "text")
     entry.setValue(Int16(body.string.count), forKey: "textLength")
     let assetPlacementWrapper = creating ? nil : entry.value(forKey: "mergeableAttributes") as? NSObject
-    entry.setValue(try makeMergeableAttributes(title: title, text: body, preservingAssetPlacementFrom: assetPlacementWrapper), forKey: "mergeableAttributes")
+    let mergeableAttributes = creating
+        ? try makeMergeableAttributes(title: title, text: body, preservingAssetPlacementFrom: assetPlacementWrapper)
+        : try makeReplacingMergeableAttributes(title: title, text: body, from: assetPlacementWrapper)
+    entry.setValue(mergeableAttributes, forKey: "mergeableAttributes")
     entry.setValue(now, forKey: "updatedDate")
     entry.setValue(now, forKey: "entryDataUpdateDate")
     entry.setValue(true, forKey: "showTitle")
@@ -785,7 +1070,7 @@ func entryTitle(_ entry: NSManagedObject) -> String {
 }
 
 func entryText(_ entry: NSManagedObject) -> String {
-    rtfString(entry.value(forKey: "text") as? Data)
+    markdownString(rtfAttributedString(entry.value(forKey: "text") as? Data))
 }
 
 func describeAttributes(_ value: Any) -> String {
@@ -1964,6 +2249,14 @@ func save(_ context: NSManagedObjectContext) throws {
 
 func run() throws {
     var options = try parseOptions()
+    if options.command == "debug-markdown" {
+        let body = try readBody(path: options.bodyPath)
+        let attributed = markdownAttributedString(body)
+        let restored = rtfAttributedString(try rtfData(attributed))
+        print(markdownString(restored), terminator: "")
+        return
+    }
+
     switch options.command {
     case "list", "get", "sync-status", "debug-attrs":
         options.readOnly = true
@@ -1988,7 +2281,14 @@ func run() throws {
         for entry in entries {
             let deleted = (entry.value(forKey: "recentlyDeleted") as? Bool) == true ? "deleted" : "active"
             let created = entry.value(forKey: "createdDate") as? Date
-            print([entryUUID(entry), deleted, created?.ISO8601Format() ?? "", entryTitle(entry)].joined(separator: "\t"))
+            let updated = entry.value(forKey: "updatedDate") as? Date
+            print([
+                entryUUID(entry),
+                deleted,
+                created?.ISO8601Format() ?? "",
+                updated?.ISO8601Format() ?? "",
+                entryTitle(entry)
+            ].joined(separator: "\t"))
         }
 
     case "get":
@@ -1999,7 +2299,8 @@ func run() throws {
         if let created = entry.value(forKey: "createdDate") as? Date { print("created: \(created.ISO8601Format())") }
         if let updated = entry.value(forKey: "updatedDate") as? Date { print("updated: \(updated.ISO8601Format())") }
         print("---")
-        print(entryText(entry), terminator: entryText(entry).hasSuffix("\n") ? "" : "\n")
+        let text = entryText(entry)
+        print(text, terminator: text.hasSuffix("\n") ? "" : "\n")
 
     case "add":
         guard let title = options.title else { throw ToolError.usage("add requires --title") }
