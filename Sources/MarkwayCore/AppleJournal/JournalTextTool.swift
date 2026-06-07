@@ -197,7 +197,6 @@ public struct JournalTextTool: JournalBackend {
             candidates.append(directory.appendingPathComponent("Vendor/AppleJournalCRDT/tools/journal_text.zsh"))
             candidates.append(directory.appendingPathComponent("tools/journal_text.zsh"))
         }
-        candidates.append(URL(fileURLWithPath: "/Users/anup/projects/markway-journal-crdt/tools/journal_text.zsh"))
         return candidates
     }
 

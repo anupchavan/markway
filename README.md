@@ -108,16 +108,16 @@ Useful commands:
 
 ```zsh
 markway journal:entries
-markway journal:entry path="Journal/Played Frisbee.md"
-markway journal:read path="Journal/Played Frisbee.md"
-markway journal:push file="Journal/Played Frisbee.md"
+markway journal:entry path="Journal/Today.md"
+markway journal:read path="Journal/Today.md"
+markway journal:push file="Journal/Today.md"
 markway journal:pull id=ENTRY_ID out="Journal/Entry.md"
 
 markway music:songs limit=20
 markway music:song title="Sahiba"
 markway music:albums artist="A. R. Rahman"
 markway music:album album="Rockstar"
-markway music:search query="Na Jaaney Kyun"
+markway music:search query="Sahiba"
 ```
 
 Broad Music list commands show 20 rows by default; use `limit=all` when you explicitly want exhaustive output.
