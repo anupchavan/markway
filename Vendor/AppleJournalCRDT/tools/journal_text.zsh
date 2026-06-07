@@ -3,15 +3,16 @@ set -euo pipefail
 
 script_dir="${0:A:h}"
 workspace="${script_dir:h}"
+repo_root="${workspace:h:h}"
 build_dir="$workspace/.build"
-binary="$build_dir/journal_text"
+binary="${JOURNAL_TEXT_OUTPUT:-$build_dir/journal_text}"
 shim_object="$build_dir/crdt_shims.o"
 converter_bundle="$build_dir/JournalShareExtension_as_bundle"
 converter_source="${JOURNAL_TEXT_CONVERTER_SOURCE:-/System/Applications/Journal.app/Contents/PlugIns/JournalShareExtension.appex/Contents/MacOS/JournalShareExtension}"
 
 mkdir -p "$build_dir"
 
-arch="$(uname -m)"
+arch="${JOURNAL_TEXT_ARCH:-$(uname -m)}"
 case "$arch" in
   arm64)
     swift_target="arm64-apple-ios17.0-macabi"
@@ -59,11 +60,20 @@ if [[ "$needs_converter" == true ]]; then
 fi
 
 if [[ "$needs_build" == true ]]; then
-  xcrun clang -target "$swift_target" -isysroot "$sdk_path" -c "$script_dir/crdt_shims.s" -o "$shim_object"
+  xcrun clang -target "$swift_target" -isysroot "$sdk_path" \
+    -fdebug-prefix-map="$workspace=Vendor/AppleJournalCRDT" \
+    -ffile-prefix-map="$workspace=Vendor/AppleJournalCRDT" \
+    -fdebug-prefix-map="$repo_root=." \
+    -ffile-prefix-map="$repo_root=." \
+    -c "$script_dir/crdt_shims.s" -o "$shim_object"
   xcrun swiftc "$script_dir/journal_text.swift" "$shim_object" \
     -o "$binary" \
     -target "$swift_target" \
     -sdk "$sdk_path" \
+    -debug-prefix-map "$workspace=Vendor/AppleJournalCRDT" \
+    -file-prefix-map "$workspace=Vendor/AppleJournalCRDT" \
+    -debug-prefix-map "$repo_root=." \
+    -file-prefix-map "$repo_root=." \
     -F"$sdk_path/System/iOSSupport/System/Library/Frameworks" \
     -F"$sdk_path/System/Library/PrivateFrameworks" \
     -framework UIKit \

@@ -41,9 +41,6 @@ jobs:
           - name: Apple Silicon
             arch: arm64
             runner: macos-15
-          - name: Intel
-            arch: x86_64
-            runner: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +67,7 @@ jobs:
       - name: Build app
         env:
           ARCH: ${{ matrix.arch }}
+          MARKWAY_USE_PREBUILT_JOURNAL_HELPER: "1"
         run: |
           set -euo pipefail
           build_args=(

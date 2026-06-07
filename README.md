@@ -12,7 +12,7 @@ This is the native macOS side of Markway:
 - `markway`, a Swift command-line tool with Journal and Apple Music commands.
 - `MarkwayCore`, the shared Swift sync engine used by the app and CLI.
 - A bundled Apple Journal helper from `Vendor/AppleJournalCRDT/tools`.
-- GitHub Actions release automation for Apple Silicon and Intel DMGs.
+- GitHub Actions release automation for Apple Silicon DMGs.
 
 The Obsidian plugin lives in a separate repository:
 
@@ -163,16 +163,11 @@ The release workflow is in:
 .github/workflows/release.yml
 ```
 
-It builds two draft DMG artifacts:
+It builds a draft DMG artifact:
 
 - `Markway-vX.Y.Z-arm64.dmg`
-- `Markway-vX.Y.Z-x86_64.dmg`
 
-Release details and required GitHub secrets are documented in:
-
-```text
-Docs/RELEASE.md
-```
+Intel builds are not published yet because the current Apple Journal CRDT shim is arm64-only.
 
 Short version:
 
