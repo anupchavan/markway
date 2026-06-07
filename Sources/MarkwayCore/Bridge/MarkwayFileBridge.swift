@@ -8,6 +8,7 @@ public enum MarkwayBridgeKind: String, Codable, Sendable {
     case journalPush
     case journalPull
     case journalDelete
+    case journalDeleteAttachment
 }
 
 public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
@@ -16,6 +17,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
     public var filePath: String?
     public var relativePath: String?
     public var journalID: String?
+    public var assetID: String?
     public var title: String?
     public var includeMusicAttachments: Bool?
     public var stripTitleHeading: Bool?
@@ -27,6 +29,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         filePath: String? = nil,
         relativePath: String? = nil,
         journalID: String? = nil,
+        assetID: String? = nil,
         title: String? = nil,
         includeMusicAttachments: Bool? = nil,
         stripTitleHeading: Bool? = nil,
@@ -37,6 +40,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         self.filePath = filePath
         self.relativePath = relativePath
         self.journalID = journalID
+        self.assetID = assetID
         self.title = title
         self.includeMusicAttachments = includeMusicAttachments
         self.stripTitleHeading = stripTitleHeading
@@ -257,6 +261,22 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
                 id: request.id,
                 ok: true,
                 message: "Deleted Journal entry",
+                journalID: journalID
+            )
+
+        case .journalDeleteAttachment:
+            guard let journalID = request.journalID, !journalID.isEmpty else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "journalDeleteAttachment requires journalID")
+            }
+            guard let assetID = request.assetID, !assetID.isEmpty else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "journalDeleteAttachment requires assetID")
+            }
+
+            try journal.deleteAttachment(entryID: journalID, assetID: assetID)
+            return MarkwayBridgeResponse(
+                id: request.id,
+                ok: true,
+                message: "Deleted Journal attachment",
                 journalID: journalID
             )
         }

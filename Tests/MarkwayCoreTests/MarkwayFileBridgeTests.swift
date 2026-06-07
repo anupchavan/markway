@@ -91,6 +91,43 @@ final class MarkwayFileBridgeTests: XCTestCase {
         XCTAssertEqual(permissions?.intValue, 0o600)
     }
 
+    func testBridgeAgentProcessesRequestsWrittenAfterStart() throws {
+        let temp = try temporaryDirectory()
+        let journalContainer = temp.appendingPathComponent("JournalContainer", isDirectory: true)
+        try FileManager.default.createDirectory(at: journalContainer, withIntermediateDirectories: true)
+        let note = temp.appendingPathComponent("Entry.md")
+        try "Agent body".write(to: note, atomically: true, encoding: .utf8)
+
+        let bridgeBase = temp.appendingPathComponent("BridgeBase", isDirectory: true)
+        let backend = RecordingJournalBackend(nextID: "AGENT-ID")
+        let agent = MarkwayBridgeAgent(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: bridgeBase,
+            journalContainerURL: journalContainer
+        )
+        try agent.start()
+        defer {
+            agent.stop()
+        }
+
+        let bridge = MarkwayFileBridge(vaultURL: temp, journal: backend, bridgeBaseURL: bridgeBase)
+        try bridge.prepare()
+        let request = MarkwayBridgeRequest(id: "AGENT-REQUEST", kind: .journalPush, relativePath: "Entry.md")
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("AGENT-REQUEST.json"),
+            options: .atomic
+        )
+
+        let responseURL = bridge.responsesURL.appendingPathComponent("AGENT-REQUEST.json")
+        let response = try waitForBridgeResponse(at: responseURL)
+
+        XCTAssertEqual(response.ok, true)
+        XCTAssertEqual(response.journalID, "AGENT-ID")
+        XCTAssertEqual(backend.addCalls.count, 1)
+        XCTAssertEqual(try String(contentsOf: backend.addCalls[0].bodyFile), "Agent body")
+    }
+
     func testListsAndReadsJournalEntriesThroughBackend() throws {
         let temp = try temporaryDirectory()
         let backend = RecordingJournalBackend(nextID: "UNUSED")
@@ -219,6 +256,36 @@ final class MarkwayFileBridgeTests: XCTestCase {
         XCTAssertEqual(backend.deleteCalls, ["ENTRY-ID"])
     }
 
+    func testProcessesJournalAttachmentDeleteRequestThroughBackend() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "DELETE-ASSET-ID",
+            kind: .journalDeleteAttachment,
+            journalID: "ENTRY-ID",
+            assetID: "ASSET-ID"
+        )
+        let requestData = try JSONEncoder.markway.encode(request)
+        try requestData.write(
+            to: bridge.requestsURL.appendingPathComponent("DELETE-ASSET-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(responses.first?.journalID, "ENTRY-ID")
+        XCTAssertEqual(backend.attachmentDeleteCalls, [["ENTRY-ID", "ASSET-ID"]])
+    }
+
     func testRejectsBridgeRequestPathOutsideVault() throws {
         let temp = try temporaryDirectory()
         let backend = RecordingJournalBackend(nextID: "UNUSED")
@@ -252,5 +319,18 @@ final class MarkwayFileBridgeTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+
+    private func waitForBridgeResponse(at url: URL, timeout: TimeInterval = 3) throws -> MarkwayBridgeResponse {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+            if FileManager.default.fileExists(atPath: url.path) {
+                let data = try Data(contentsOf: url)
+                return try JSONDecoder.markway.decode(MarkwayBridgeResponse.self, from: data)
+            }
+        }
+        XCTFail("Timed out waiting for bridge response at \(url.path)")
+        throw CocoaError(.fileNoSuchFile)
     }
 }

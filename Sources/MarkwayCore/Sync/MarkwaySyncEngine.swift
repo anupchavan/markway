@@ -247,7 +247,7 @@ enum MarkdownStructurePreserver {
             output.append(contentsOf: journal[journalIndex...])
         }
 
-        return output.joined(separator: "\n")
+        return alignTrailingBlankLines(output: output, journal: journal).joined(separator: "\n")
     }
 
     private struct FencedBlock {
@@ -335,6 +335,28 @@ enum MarkdownStructurePreserver {
             index += 1
         }
         return index
+    }
+
+    private static func alignTrailingBlankLines(output: [String], journal: [String]) -> [String] {
+        let desiredTrailingBlanks = trailingBlankLineCount(journal)
+        let currentTrailingBlanks = trailingBlankLineCount(output)
+        guard currentTrailingBlanks != desiredTrailingBlanks else {
+            return output
+        }
+
+        return Array(output.dropLast(currentTrailingBlanks))
+            + Array(repeating: "", count: desiredTrailingBlanks)
+    }
+
+    private static func trailingBlankLineCount(_ lines: [String]) -> Int {
+        var count = 0
+        for line in lines.reversed() {
+            guard isBlank(line) else {
+                break
+            }
+            count += 1
+        }
+        return count
     }
 
     private static func markdownLineText(_ line: String) -> String {

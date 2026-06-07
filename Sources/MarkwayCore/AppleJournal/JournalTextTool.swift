@@ -67,6 +67,10 @@ public struct JournalTextTool: JournalBackend {
         _ = try runRaw(["delete", id])
     }
 
+    public func deleteAttachment(entryID: String, assetID: String) throws {
+        _ = try runRaw(["attachments", "delete", entryID, assetID])
+    }
+
     public func get(id: String) throws -> JournalEntryText {
         let output = try runRaw(["get", id])
         let marker = "\n---\n"
@@ -185,12 +189,31 @@ public struct JournalTextTool: JournalBackend {
 
     private static func candidateURLs(from start: URL) -> [URL] {
         var candidates: [URL] = []
+        for executableURL in currentExecutableURLs() {
+            candidates.append(executableURL.deletingLastPathComponent().appendingPathComponent("journal_text"))
+            candidates.append(executableURL.deletingLastPathComponent().appendingPathComponent("journal_text.zsh"))
+        }
         for directory in ancestorDirectories(from: start) {
             candidates.append(directory.appendingPathComponent("Vendor/AppleJournalCRDT/tools/journal_text.zsh"))
             candidates.append(directory.appendingPathComponent("tools/journal_text.zsh"))
         }
         candidates.append(URL(fileURLWithPath: "/Users/anup/projects/markway-journal-crdt/tools/journal_text.zsh"))
         return candidates
+    }
+
+    private static func currentExecutableURLs() -> [URL] {
+        var urls: [URL] = []
+
+        if let argument = ProcessInfo.processInfo.arguments.first, !argument.isEmpty {
+            urls.append(URL(fileURLWithPath: argument).standardizedFileURL)
+        }
+
+        let processPath = ProcessInfo.processInfo.processName
+        if !processPath.isEmpty {
+            urls.append(URL(fileURLWithPath: processPath).standardizedFileURL)
+        }
+
+        return urls
     }
 
     private static func ancestorDirectories(from start: URL) -> [URL] {

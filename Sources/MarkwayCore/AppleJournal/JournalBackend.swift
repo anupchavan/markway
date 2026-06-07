@@ -86,6 +86,7 @@ public protocol JournalBackend: Sendable {
     func add(title: String, bodyFile: URL) throws -> String
     func update(id: String, title: String, bodyFile: URL) throws
     func delete(id: String) throws
+    func deleteAttachment(entryID: String, assetID: String) throws
     func get(id: String) throws -> JournalEntryText
     func musicAttachments(id: String) throws -> [JournalMusicAttachment]
     func runRaw(_ arguments: [String]) throws -> String

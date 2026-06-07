@@ -7,14 +7,32 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		01B990B45B6506554B70F839 /* LaunchAgentController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F5CB78FA03B38EBC18A2CDD /* LaunchAgentController.swift */; };
+		1CB23205E3BFE4D5437BB378 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 6035E49ADA7615C2C91D22D8 /* Sparkle */; };
+		249756768EA768C7F125D374 /* MarkwaySidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA5BD2D5700625B8CEA82639 /* MarkwaySidebar.swift */; };
+		289C736162DE491E5C70A2DA /* MarkwayTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D50335ED743EAD95C0B7269F /* MarkwayTheme.swift */; };
+		6828241E4172D336354C66AA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AE344D4376FE9F743347071E /* Assets.xcassets */; };
+		7D04FFB92D7D252A6B4BE3B8 /* MarkwayLogReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A496908FC4AE296D6E2D06 /* MarkwayLogReader.swift */; };
 		9026A4521015DB3E76541E32 /* MarkwayCore in Frameworks */ = {isa = PBXBuildFile; productRef = 60CE89BDF6C87A295C7E9F81 /* MarkwayCore */; };
+		98618B5742D9B5EBE0FFC85A /* MarkwayUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17641B765A2D021922E8D3AA /* MarkwayUpdater.swift */; };
+		A020E9483EE2863C45B2BB92 /* MarkwayPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B559D8F23C8188B9BCC139DB /* MarkwayPages.swift */; };
 		CE64E5C06A73EC51E12C23E3 /* MarkwayApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A8F6CA1B4AC36A032ADA65 /* MarkwayApp.swift */; };
 		DB7353981FF070A49726B7A0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE4120F502F43EAEE116D8A4 /* ContentView.swift */; };
+		FBA92321277519576E965FDC /* MarkwaySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1CD47D19655C2171C8E9412 /* MarkwaySection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		17641B765A2D021922E8D3AA /* MarkwayUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwayUpdater.swift; sourceTree = "<group>"; };
+		3C0660685B2B7E5E0BE47B9B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		7213FA3ECF010BFFF04C3DAE /* Markway.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Markway.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		7F5CB78FA03B38EBC18A2CDD /* LaunchAgentController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchAgentController.swift; sourceTree = "<group>"; };
+		88A496908FC4AE296D6E2D06 /* MarkwayLogReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwayLogReader.swift; sourceTree = "<group>"; };
+		AE344D4376FE9F743347071E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B1CD47D19655C2171C8E9412 /* MarkwaySection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwaySection.swift; sourceTree = "<group>"; };
 		B36FDFFF5DA0D45971A3CD45 /* markway */ = {isa = PBXFileReference; lastKnownFileType = folder; name = markway; path = .; sourceTree = SOURCE_ROOT; };
+		B559D8F23C8188B9BCC139DB /* MarkwayPages.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwayPages.swift; sourceTree = "<group>"; };
+		BA5BD2D5700625B8CEA82639 /* MarkwaySidebar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwaySidebar.swift; sourceTree = "<group>"; };
+		D50335ED743EAD95C0B7269F /* MarkwayTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwayTheme.swift; sourceTree = "<group>"; };
 		E5A8F6CA1B4AC36A032ADA65 /* MarkwayApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwayApp.swift; sourceTree = "<group>"; };
 		FE4120F502F43EAEE116D8A4 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -25,6 +43,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				9026A4521015DB3E76541E32 /* MarkwayCore in Frameworks */,
+				1CB23205E3BFE4D5437BB378 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -42,8 +61,17 @@
 		36B20C678CBA1482737B1633 /* MarkwayMac */ = {
 			isa = PBXGroup;
 			children = (
+				AE344D4376FE9F743347071E /* Assets.xcassets */,
 				FE4120F502F43EAEE116D8A4 /* ContentView.swift */,
+				3C0660685B2B7E5E0BE47B9B /* Info.plist */,
+				7F5CB78FA03B38EBC18A2CDD /* LaunchAgentController.swift */,
 				E5A8F6CA1B4AC36A032ADA65 /* MarkwayApp.swift */,
+				88A496908FC4AE296D6E2D06 /* MarkwayLogReader.swift */,
+				B559D8F23C8188B9BCC139DB /* MarkwayPages.swift */,
+				B1CD47D19655C2171C8E9412 /* MarkwaySection.swift */,
+				BA5BD2D5700625B8CEA82639 /* MarkwaySidebar.swift */,
+				D50335ED743EAD95C0B7269F /* MarkwayTheme.swift */,
+				17641B765A2D021922E8D3AA /* MarkwayUpdater.swift */,
 			);
 			name = MarkwayMac;
 			path = Apps/MarkwayMac;
@@ -74,8 +102,9 @@
 			buildConfigurationList = 56A6179AA68A3A4E7C20A00A /* Build configuration list for PBXNativeTarget "Markway" */;
 			buildPhases = (
 				0100F18764BA5D0272C84BEA /* Sources */,
+				7A0F5844BDF283D67E31C331 /* Resources */,
 				EC359690C2BE724533547AC2 /* Frameworks */,
-				0576EC13BC20A932901FF2CF /* Copy Journal Helper */,
+				3BE3F4913B80697728F05A59 /* Copy Bundle Helpers */,
 			);
 			buildRules = (
 			);
@@ -84,6 +113,7 @@
 			name = Markway;
 			packageProductDependencies = (
 				60CE89BDF6C87A295C7E9F81 /* MarkwayCore */,
+				6035E49ADA7615C2C91D22D8 /* Sparkle */,
 			);
 			productName = Markway;
 			productReference = 7213FA3ECF010BFFF04C3DAE /* Markway.app */;
@@ -114,6 +144,7 @@
 			mainGroup = 5FDBC982328B2FD6E73420F4;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				60994BC82DA97E69B233668B /* XCRemoteSwiftPackageReference "Sparkle" */,
 				D220BBE6C64CCAF4AF0FE617 /* XCLocalSwiftPackageReference "." */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -126,8 +157,19 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		7A0F5844BDF283D67E31C331 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6828241E4172D336354C66AA /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXShellScriptBuildPhase section */
-		0576EC13BC20A932901FF2CF /* Copy Journal Helper */ = {
+		3BE3F4913B80697728F05A59 /* Copy Bundle Helpers */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -137,7 +179,7 @@
 			);
 			inputPaths = (
 			);
-			name = "Copy Journal Helper";
+			name = "Copy Bundle Helpers";
 			outputFileListPaths = (
 			);
 			outputPaths = (
@@ -154,7 +196,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				DB7353981FF070A49726B7A0 /* ContentView.swift in Sources */,
+				01B990B45B6506554B70F839 /* LaunchAgentController.swift in Sources */,
 				CE64E5C06A73EC51E12C23E3 /* MarkwayApp.swift in Sources */,
+				7D04FFB92D7D252A6B4BE3B8 /* MarkwayLogReader.swift in Sources */,
+				A020E9483EE2863C45B2BB92 /* MarkwayPages.swift in Sources */,
+				FBA92321277519576E965FDC /* MarkwaySection.swift in Sources */,
+				249756768EA768C7F125D374 /* MarkwaySidebar.swift in Sources */,
+				289C736162DE491E5C70A2DA /* MarkwayTheme.swift in Sources */,
+				98618B5742D9B5EBE0FFC85A /* MarkwayUpdater.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -232,14 +281,18 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = KVGD368RNR;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Markway;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Apps/MarkwayMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MARKETING_VERSION = 0.1.0;
+				MARKWAY_SPARKLE_PUBLIC_ED_KEY = "";
+				MARKWAY_UPDATE_FEED_URL = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anupchavan.markway;
 				SDKROOT = macosx;
 			};
@@ -309,14 +362,18 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = KVGD368RNR;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Markway;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Apps/MarkwayMac/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MARKETING_VERSION = 0.1.0;
+				MARKWAY_SPARKLE_PUBLIC_ED_KEY = "";
+				MARKWAY_UPDATE_FEED_URL = "";
 				PRODUCT_BUNDLE_IDENTIFIER = com.anupchavan.markway;
 				SDKROOT = macosx;
 			};
@@ -352,7 +409,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		60994BC82DA97E69B233668B /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		6035E49ADA7615C2C91D22D8 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 60994BC82DA97E69B233668B /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
 		60CE89BDF6C87A295C7E9F81 /* MarkwayCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MarkwayCore;

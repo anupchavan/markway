@@ -204,6 +204,20 @@ final class MarkwaySyncEngineTests: XCTestCase {
         """)
     }
 
+    func testPreserverDoesNotKeepStaleExtraTrailingBlankLines() {
+        XCTAssertEqual(
+            MarkdownStructurePreserver.preserve(existingBody: "Body\n\n\n\n\n", journalBody: "Body\n"),
+            "Body\n"
+        )
+    }
+
+    func testPreserverKeepsTrailingBlankLinesPresentInJournalBody() {
+        XCTAssertEqual(
+            MarkdownStructurePreserver.preserve(existingBody: "Body\n", journalBody: "Body\n\n\n"),
+            "Body\n\n\n"
+        )
+    }
+
     func testScanVaultPlansCreatesAndUpdates() throws {
         let temp = try temporaryDirectory()
         try FileManager.default.createDirectory(at: temp.appendingPathComponent(".obsidian"), withIntermediateDirectories: true)
@@ -247,6 +261,7 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
     var addCalls: [AddCall] = []
     var updateCalls: [UpdateCall] = []
     var deleteCalls: [String] = []
+    var attachmentDeleteCalls: [[String]] = []
     var rawCalls: [[String]] = []
     var listResults: [JournalEntrySummary] = []
     var musicResults: [JournalMusicAttachment] = []
@@ -271,6 +286,10 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
 
     func delete(id: String) throws {
         deleteCalls.append(id)
+    }
+
+    func deleteAttachment(entryID: String, assetID: String) throws {
+        attachmentDeleteCalls.append([entryID, assetID])
     }
 
     func get(id: String) throws -> JournalEntryText {

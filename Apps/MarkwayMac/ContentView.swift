@@ -1,245 +1,87 @@
-import MarkwayCore
 import AppKit
-import CoreServices
-import Darwin
+import MarkwayCore
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var selectedSection: MarkwaySection? = .general
     @State private var vaultPath = UserDefaults.standard.string(forKey: "vaultPath") ?? ""
-    @State private var bridgeStatus = "Bridge stopped."
-    @State private var message = "Idle"
-    @State private var bridgeWatcher: BridgeDirectoryWatcher?
-    @State private var journalWatcher: RecursiveDirectoryWatcher?
-    @State private var pendingBridgeProcess: DispatchWorkItem?
-    @State private var pendingJournalEvent: DispatchWorkItem?
-    @State private var isProcessingBridge = false
+    @State private var status = "Choose your Markdown vault to enable background sync."
+    @State private var detail = ""
+    @State private var logText = MarkwayLogReader.journalLogTail()
+    @State private var isConfiguring = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Markway")
-                .font(.largeTitle.bold())
-
-            HStack {
-                TextField("Markdown vault", text: $vaultPath)
-                    .textFieldStyle(.roundedBorder)
-                Button("Scan") {
-                    scan()
-                }
-                .keyboardShortcut(.defaultAction)
-                Button(bridgeWatcher == nil ? "Start bridge" : "Stop bridge") {
-                    toggleBridge()
-                }
+        NavigationSplitView {
+            MarkwaySidebar(selectedSection: $selectedSection)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210)
+        } detail: {
+            ZStack(alignment: .topLeading) {
+                MarkwayTheme.windowBackground(colorScheme)
+                    .ignoresSafeArea()
+                detailView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
-
-            HStack {
-                Button("Check Journal Access") {
-                    checkJournalAccess()
-                }
-
-                Button("Open Full Disk Access") {
-                    openFullDiskAccessSettings()
-                }
-
-                Button("Reveal Markway.app") {
-                    revealMarkwayApp()
-                }
-
-                Button("Reveal Journal helper") {
-                    revealJournalHelper()
+            .toolbar {
+                if activeSection == .journal {
+                    ToolbarItem {
+                        Button(action: refreshLogs) {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                    }
                 }
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text(bridgeStatus)
-                Text(message)
-            }
-            .font(.system(.body, design: .monospaced))
-            .foregroundStyle(.secondary)
-            .textSelection(.enabled)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(24)
-        .frame(minWidth: 560, minHeight: 260)
-    }
-
-    private func scan() {
-        guard let vaultURL else {
-            message = "Choose a vault path."
-            return
-        }
-        UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
-
-        do {
-            let engine = MarkwaySyncEngine(journal: NoopJournalBackend())
-            let summary = try engine.scanVault(at: vaultURL)
-            message = """
-            markdown files: \(summary.markdownFiles)
-            linked journal entries: \(summary.linkedJournalEntries)
-            unlinked markdown files: \(summary.unlinkedMarkdownFiles)
-            """
-        } catch {
-            message = String(describing: error)
-        }
-    }
-
-    private func toggleBridge() {
-        if bridgeWatcher != nil {
-            stopBridge()
-            return
-        }
-
-        guard let vaultURL else {
-            message = "Choose a vault path."
-            return
-        }
-
-        UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
-        do {
-            let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: NoopJournalBackend())
-            try bridge.prepare()
-            processBridge(vaultURL: vaultURL)
-            bridgeWatcher = try BridgeDirectoryWatcher(directoryURL: bridge.requestsURL) {
-                queueBridgeProcess(vaultURL: vaultURL)
-            }
-            startJournalWatcher(vaultURL: vaultURL)
-            bridgeStatus = "Bridge started: \(bridge.bridgeURL.path)"
-        } catch {
-            message = String(describing: error)
-        }
-    }
-
-    private func stopBridge() {
-        pendingBridgeProcess?.cancel()
-        pendingBridgeProcess = nil
-        pendingJournalEvent?.cancel()
-        pendingJournalEvent = nil
-        journalWatcher?.cancel()
-        journalWatcher = nil
-        bridgeWatcher?.cancel()
-        bridgeWatcher = nil
-        bridgeStatus = "Bridge stopped."
-    }
-
-    private func startJournalWatcher(vaultURL: URL) {
-        do {
-            let containerURL = Self.defaultJournalContainerURL()
-            journalWatcher = try RecursiveDirectoryWatcher(directoryURL: containerURL) {
-                queueJournalChangedEvent(vaultURL: vaultURL)
-            }
-        } catch {
-            message = "Bridge started, but Journal watcher could not start: \(error)"
-        }
-    }
-
-    private func queueBridgeProcess(vaultURL: URL) {
-        pendingBridgeProcess?.cancel()
-        let workItem = DispatchWorkItem {
-            pendingBridgeProcess = nil
-            processBridge(vaultURL: vaultURL)
-        }
-        pendingBridgeProcess = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: workItem)
-    }
-
-    private func queueJournalChangedEvent(vaultURL: URL) {
-        pendingJournalEvent?.cancel()
-        let workItem = DispatchWorkItem {
-            emitJournalChangedEvent(vaultURL: vaultURL)
-        }
-        pendingJournalEvent = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0, execute: workItem)
-    }
-
-    private func emitJournalChangedEvent(vaultURL: URL) {
-        guard pendingJournalEvent?.isCancelled == false else {
-            return
-        }
-        pendingJournalEvent = nil
-
-        do {
-            let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: NoopJournalBackend())
-            try bridge.emitEvent(kind: .journalChanged)
-            bridgeStatus = "Journal change queued for Obsidian."
-        } catch {
-            message = "Failed to queue Journal change: \(error)"
-        }
-    }
-
-    private func processBridge(vaultURL: URL) {
-        guard !isProcessingBridge else {
-            return
-        }
-
-        isProcessingBridge = true
-        defer { isProcessingBridge = false }
-
-        do {
-            guard let journal = journalTool() else {
-                message = "Bundled Journal helper not found. Rebuild Markway.app."
-                return
-            }
-
-            let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: journal)
-            let responses = try bridge.processPendingRequests()
-            if responses.isEmpty {
-                bridgeStatus = "Bridge running: \(bridge.bridgeURL.path)"
-            } else {
-                let successes = responses.filter(\.ok).count
-                message = "Processed \(responses.count) request(s), \(successes) ok."
-            }
-        } catch {
-            message = String(describing: error)
-        }
-    }
-
-    private func checkJournalAccess() {
-        do {
-            guard let journal = journalTool() else {
-                message = "Bundled Journal helper not found. Rebuild Markway.app."
-                return
-            }
-
-            _ = try journal.runRaw(["sync-status"])
-            message = "Journal access OK."
-        } catch {
-            message = String(describing: error)
-        }
-    }
-
-    private func openFullDiskAccessSettings() {
-        let settingsURLs = [
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
-            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"
-        ]
-
-        for urlString in settingsURLs {
-            guard let url = URL(string: urlString) else {
-                continue
-            }
-
-            if NSWorkspace.shared.open(url) {
-                message = "Opened Full Disk Access. Enable Markway.app, then fully quit and reopen Markway.app."
-                return
+        .navigationSplitViewStyle(.balanced)
+        .frame(minWidth: 820, minHeight: 520)
+        .onChange(of: selectedSection) { _, newValue in
+            if newValue == .journal {
+                refreshLogs()
             }
         }
-
-        message = "Could not open Full Disk Access. Open System Settings > Privacy & Security > Full Disk Access."
-    }
-
-    private func revealMarkwayApp() {
-        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
-        message = "Revealed Markway.app. In Full Disk Access, use + and select this app if it is not listed."
-    }
-
-    private func revealJournalHelper() {
-        let helperURL = journalHelperURL
-        guard FileManager.default.isExecutableFile(atPath: helperURL.path) else {
-            message = "Bundled Journal helper not found. Rebuild Markway.app."
-            return
+        .onAppear {
+            configureFromCurrentVaultPathIfPresent()
+            refreshLogs()
         }
+    }
 
-        NSWorkspace.shared.activateFileViewerSelecting([helperURL])
-        message = "Revealed journal_text. If Journal access still fails after enabling Markway.app, add this helper to Full Disk Access too."
+    private var activeSection: MarkwaySection {
+        selectedSection ?? .general
+    }
+
+    @ViewBuilder
+    private var detailView: some View {
+        switch activeSection {
+        case .general:
+            GeneralPage(
+                vaultPath: $vaultPath,
+                status: status,
+                detail: detail,
+                statusSymbolName: statusSymbolName,
+                statusIsError: statusIsError,
+                isConfiguring: isConfiguring,
+                chooseVault: chooseVault,
+                configureVault: configureFromCurrentVaultPath
+            )
+        case .journal:
+            JournalPage(logText: logText)
+        case .music:
+            MusicPage()
+        }
+    }
+
+    private var statusIsError: Bool {
+        detail.hasPrefix("Error:")
+    }
+
+    private var statusSymbolName: String {
+        if statusIsError {
+            return "exclamationmark.triangle.fill"
+        }
+        if vaultURL != nil {
+            return "checkmark.circle.fill"
+        }
+        return "circle"
     }
 
     private var vaultURL: URL? {
@@ -247,147 +89,84 @@ struct ContentView: View {
         guard !path.isEmpty else {
             return nil
         }
-        return URL(fileURLWithPath: path).standardizedFileURL
+        return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
     }
 
-    private func journalTool() -> JournalTextTool? {
-        let bundledHelper = journalHelperURL
-
-        if FileManager.default.isExecutableFile(atPath: bundledHelper.path) {
-            return JournalTextTool(executableURL: bundledHelper)
-        }
-
-        return nil
+    private func refreshLogs() {
+        logText = MarkwayLogReader.journalLogTail()
     }
 
-    private var journalHelperURL: URL {
-        Bundle.main.bundleURL
-            .appendingPathComponent("Contents")
-            .appendingPathComponent("Helpers")
-            .appendingPathComponent("journal_text")
-    }
-
-    private static func defaultJournalContainerURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Group Containers", isDirectory: true)
-            .appendingPathComponent("group.com.apple.moments", isDirectory: true)
-    }
-}
-
-private struct NoopJournalBackend: JournalBackend {
-    func list() throws -> [JournalEntrySummary] { [] }
-    func add(title: String, bodyFile: URL) throws -> String { "" }
-    func update(id: String, title: String, bodyFile: URL) throws {}
-    func delete(id: String) throws {}
-    func get(id: String) throws -> JournalEntryText { JournalEntryText(id: id, title: "", body: "") }
-    func musicAttachments(id: String) throws -> [JournalMusicAttachment] { [] }
-    func runRaw(_ arguments: [String]) throws -> String { "" }
-}
-
-private final class BridgeDirectoryWatcher {
-    private let source: DispatchSourceFileSystemObject
-    private var isCancelled = false
-
-    init(directoryURL: URL, handler: @escaping () -> Void) throws {
-        let descriptor = open(directoryURL.path, O_EVTONLY)
-        guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.write, .delete, .rename],
-            queue: .main
-        )
-        source.setEventHandler {
-            handler()
-        }
-        source.setCancelHandler {
-            close(descriptor)
-        }
-        source.resume()
-
-        self.source = source
-    }
-
-    func cancel() {
-        guard !isCancelled else {
+    private func configureFromCurrentVaultPathIfPresent() {
+        guard vaultURL != nil else {
             return
         }
-        isCancelled = true
-        source.cancel()
+        configureFromCurrentVaultPath()
     }
 
-    deinit {
-        cancel()
-    }
-}
-
-private final class RecursiveDirectoryWatcher {
-    private var stream: FSEventStreamRef?
-    private let handler: () -> Void
-
-    init(directoryURL: URL, handler: @escaping () -> Void) throws {
-        var isDirectory = ObjCBool(false)
-        guard FileManager.default.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
-        else {
-            throw CocoaError(.fileNoSuchFile)
+    private func configureFromCurrentVaultPath() {
+        guard let vaultURL else {
+            status = "Choose your Markdown vault to enable background sync."
+            detail = ""
+            return
         }
 
-        self.handler = handler
+        isConfiguring = true
+        status = "Configuring background sync..."
+        detail = ""
 
-        var context = FSEventStreamContext(
-            version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
-            retain: nil,
-            release: nil,
-            copyDescription: nil
-        )
-        let flags = FSEventStreamCreateFlags(
-            kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer
-        )
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result {
+                try validateVault(vaultURL)
+                UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
 
-        guard let stream = FSEventStreamCreate(
-            kCFAllocatorDefault,
-            { _, info, _, _, _, _ in
-                guard let info else {
-                    return
+                let bridge = MarkwayFileBridge(vaultURL: vaultURL, journal: NoopJournalBackend())
+                _ = try bridge.prepare()
+
+                let controller = LaunchAgentController(bundleURL: Bundle.main.bundleURL)
+                try controller.installAndLoad(vaultURL: vaultURL)
+            }
+
+            DispatchQueue.main.async {
+                isConfiguring = false
+                switch result {
+                case .success:
+                    vaultPath = vaultURL.path
+                    status = "Background sync is ready."
+                    detail = ""
+                    refreshLogs()
+                case .failure(let error):
+                    status = "Background sync needs attention."
+                    detail = "Error: \(error)"
                 }
-                let watcher = Unmanaged<RecursiveDirectoryWatcher>.fromOpaque(info).takeUnretainedValue()
-                watcher.handler()
-            },
-            &context,
-            [directoryURL.path] as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            0.5,
-            flags
-        ) else {
-            throw CocoaError(.fileReadUnknown)
-        }
-
-        self.stream = stream
-        FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-        guard FSEventStreamStart(stream) else {
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
-            self.stream = nil
-            throw CocoaError(.fileReadUnknown)
+            }
         }
     }
 
-    func cancel() {
-        guard let stream else {
+    private func chooseVault() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Markdown vault"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = vaultURL ?? FileManager.default.homeDirectoryForCurrentUser
+
+        guard panel.runModal() == .OK, let url = panel.url else {
             return
         }
-        FSEventStreamStop(stream)
-        FSEventStreamInvalidate(stream)
-        FSEventStreamRelease(stream)
-        self.stream = nil
-    }
 
-    deinit {
-        cancel()
+        vaultPath = url.standardizedFileURL.path
+        configureFromCurrentVaultPath()
+    }
+}
+
+private func validateVault(_ url: URL) throws {
+    var isDirectory = ObjCBool(false)
+    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+          isDirectory.boolValue else {
+        throw CocoaError(.fileNoSuchFile)
+    }
+    guard FileManager.default.directoryExists(at: url.appendingPathComponent(".obsidian", isDirectory: true)) else {
+        throw ValidationError("That folder is not an Obsidian vault.")
     }
 }
