@@ -108,8 +108,73 @@ public struct MusicSong: Codable, Equatable, Sendable {
     }
 }
 
+public struct AppleMusicLibraryAlbum: Codable, Equatable, Sendable {
+    public var title: String
+    public var artistName: String
+    public var songCount: Int
+    public var songs: [MusicSong]
+
+    public init(title: String, artistName: String, songCount: Int, songs: [MusicSong] = []) {
+        self.title = title
+        self.artistName = artistName
+        self.songCount = songCount
+        self.songs = songs
+    }
+}
+
 public struct AppleMusicLibrary: Sendable {
     public init() {}
+
+    public func songCount(playlist: String? = nil) throws -> Int {
+        let output = try runAppleScript(script: Self.songCountScript(playlist: playlist))
+        return Int(output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+    }
+
+    public func filteredSongs(
+        query: String? = nil,
+        artist: String? = nil,
+        album: String? = nil,
+        limit: Int? = nil,
+        playlist: String? = nil
+    ) throws -> [MusicSong] {
+        let hasFilter = [query, artist, album]
+            .contains { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false }
+        guard hasFilter || limit != nil else {
+            return try songs(playlist: playlist)
+        }
+        let output = try runJavaScript(script: Self.filteredSongsScript(
+            query: query,
+            artist: artist,
+            album: album,
+            limit: limit,
+            playlist: playlist
+        ))
+        do {
+            let rows = try JSONDecoder().decode([AppleMusicLibrarySongRow].self, from: Data(output.utf8))
+            return rows.map(\.song)
+        } catch {
+            throw MusicCatalogError.invalidOutput(output)
+        }
+    }
+
+    public func albums(
+        album: String? = nil,
+        artist: String? = nil,
+        limit: Int? = nil,
+        playlist: String? = nil
+    ) throws -> [AppleMusicLibraryAlbum] {
+        let output = try runJavaScript(script: Self.albumsScript(
+            album: album,
+            artist: artist,
+            limit: limit,
+            playlist: playlist
+        ))
+        do {
+            return try JSONDecoder().decode([AppleMusicLibraryAlbum].self, from: Data(output.utf8))
+        } catch {
+            throw MusicCatalogError.invalidOutput(output)
+        }
+    }
 
     public func resolveSong(
         selector: String,
@@ -201,6 +266,321 @@ public struct AppleMusicLibrary: Sendable {
             )
         }
         return stdoutText
+    }
+
+    private func runAppleScript(script: String) throws -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        stdin.fileHandleForWriting.write(Data(script.utf8))
+        try stdin.fileHandleForWriting.close()
+        process.waitUntilExit()
+
+        let stdoutText = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderrText = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        guard process.terminationStatus == 0 else {
+            throw MusicCatalogError.automationFailed(
+                status: process.terminationStatus,
+                stdout: stdoutText,
+                stderr: stderrText
+            )
+        }
+        return stdoutText
+    }
+
+    private static func songCountScript(playlist: String?) -> String {
+        let playlistName = (playlist ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !playlistName.isEmpty else {
+            return """
+            tell application "Music"
+              count (every track of library playlist 1 whose media kind is song)
+            end tell
+            """
+        }
+
+        let escaped = playlistName.replacingOccurrences(of: "\"", with: "\\\"")
+        return """
+        tell application "Music"
+          set playlistName to "\(escaped)"
+          set matches to every playlist whose name is playlistName
+          if (count matches) is 0 then error "playlist not found: " & playlistName
+          if (count matches) is greater than 1 then error "playlist is ambiguous: " & playlistName
+          count (every track of item 1 of matches whose media kind is song)
+        end tell
+        """
+    }
+
+    private static func filteredSongsScript(
+        query: String?,
+        artist: String?,
+        album: String?,
+        limit: Int?,
+        playlist: String?
+    ) -> String {
+        let queryLiteral = jsStringLiteral(query?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let artistLiteral = jsStringLiteral(artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let albumLiteral = jsStringLiteral(album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let playlistLiteral = jsStringLiteral(playlist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let limitLiteral = limit.map(String.init) ?? "null"
+        return """
+        function iso(value) {
+          if (!value) return "";
+          try {
+            return new Date(value).toISOString();
+          } catch (_) {
+            return "";
+          }
+        }
+        function str(value) {
+          return value === undefined || value === null ? "" : String(value);
+        }
+        function num(value) {
+          const n = Number(value || 0);
+          return Number.isFinite(n) ? n : 0;
+        }
+        function includes(value, needle) {
+          return needle.length === 0 || str(value).toLocaleLowerCase().includes(needle);
+        }
+        function row(track) {
+          const p = track.properties();
+          return {
+            id: str(p.persistentID || p.databaseID || p.id),
+            persistentID: str(p.persistentID),
+            databaseID: num(p.databaseID),
+            title: str(p.name),
+            artistName: str(p.artist),
+            albumTitle: str(p.album),
+            albumArtist: str(p.albumArtist),
+            duration: num(p.duration),
+            genre: str(p.genre),
+            trackNumber: num(p.trackNumber),
+            trackCount: num(p.trackCount),
+            discNumber: num(p.discNumber),
+            discCount: num(p.discCount),
+            year: num(p.year),
+            cloudStatus: str(p.cloudStatus),
+            kind: str(p.kind),
+            favorited: !!p.favorited,
+            disliked: !!p.disliked,
+            playedCount: num(p.playedCount),
+            skippedCount: num(p.skippedCount),
+            dateAdded: iso(p.dateAdded),
+            releaseDate: iso(p.releaseDate),
+            playedDate: iso(p.playedDate),
+            size: num(p.size)
+          };
+        }
+        function addTracks(target, tracks) {
+          for (const track of tracks) target.push(track);
+        }
+        function uniqueTracks(tracks) {
+          const seen = new Set();
+          const result = [];
+          for (const track of tracks) {
+            const p = track.properties();
+            const key = str(p.persistentID || p.databaseID || p.id);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            result.push(track);
+          }
+          return result;
+        }
+        const query = \(queryLiteral);
+        const artist = \(artistLiteral);
+        const album = \(albumLiteral);
+        const queryNeedle = query.toLocaleLowerCase();
+        const artistNeedle = artist.toLocaleLowerCase();
+        const albumNeedle = album.toLocaleLowerCase();
+        const limit = \(limitLiteral);
+        const playlistName = \(playlistLiteral);
+        const Music = Application("Music");
+        let trackSpecifier;
+        if (playlistName.length > 0) {
+          const playlistNeedle = playlistName.toLocaleLowerCase();
+          const matches = Music.playlists().filter(p => str(p.properties().name).toLocaleLowerCase() === playlistNeedle);
+          if (matches.length === 0) throw new Error("playlist not found: " + playlistName);
+          if (matches.length > 1) throw new Error("playlist is ambiguous: " + playlistName);
+          trackSpecifier = matches[0].tracks;
+        } else {
+          trackSpecifier = Music.libraryPlaylists[0].tracks;
+        }
+
+        let candidates = [];
+        if (query.length > 0) {
+          addTracks(candidates, trackSpecifier.whose({name: {_contains: query}})());
+          addTracks(candidates, trackSpecifier.whose({artist: {_contains: query}})());
+          addTracks(candidates, trackSpecifier.whose({album: {_contains: query}})());
+          addTracks(candidates, trackSpecifier.whose({persistentID: {_contains: query}})());
+          if (/^\\d+$/.test(query)) addTracks(candidates, trackSpecifier.whose({databaseID: Number(query)})());
+        } else if (artist.length > 0) {
+          addTracks(candidates, trackSpecifier.whose({artist: {_contains: artist}})());
+        } else if (album.length > 0) {
+          addTracks(candidates, trackSpecifier.whose({album: {_contains: album}})());
+        } else if (limit !== null) {
+          for (let i = 0; i < trackSpecifier.length && candidates.length < limit; i++) {
+            candidates.push(trackSpecifier[i]);
+          }
+        } else {
+          candidates = trackSpecifier();
+        }
+
+        const rows = [];
+        for (const track of uniqueTracks(candidates)) {
+          const p = track.properties();
+          if (str(p.mediaKind) !== "song") continue;
+          const id = str(p.persistentID || p.databaseID || p.id).toLocaleLowerCase();
+          const title = str(p.name).toLocaleLowerCase();
+          if (queryNeedle.length > 0 && !id.includes(queryNeedle) && !title.includes(queryNeedle) && !includes(p.artist, queryNeedle) && !includes(p.album, queryNeedle)) continue;
+          if (!includes(p.artist, artistNeedle)) continue;
+          if (!includes(p.album, albumNeedle)) continue;
+          rows.push(row(track));
+          if (limit !== null && rows.length >= limit) break;
+        }
+        JSON.stringify(rows);
+        """
+    }
+
+    private static func albumsScript(
+        album: String?,
+        artist: String?,
+        limit: Int?,
+        playlist: String?
+    ) -> String {
+        let albumLiteral = jsStringLiteral(album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let artistLiteral = jsStringLiteral(artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let playlistLiteral = jsStringLiteral(playlist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+        let limitLiteral = limit.map(String.init) ?? "null"
+        return """
+        function iso(value) {
+          if (!value) return "";
+          try {
+            return new Date(value).toISOString();
+          } catch (_) {
+            return "";
+          }
+        }
+        function str(value) {
+          return value === undefined || value === null ? "" : String(value);
+        }
+        function num(value) {
+          const n = Number(value || 0);
+          return Number.isFinite(n) ? n : 0;
+        }
+        function includes(value, needle) {
+          return needle.length === 0 || str(value).toLocaleLowerCase().includes(needle);
+        }
+        function songValue(track) {
+          const p = track.properties();
+          return {
+            id: str(p.persistentID || p.databaseID || p.id),
+            title: str(p.name),
+            artistName: str(p.artist),
+            albumID: "",
+            albumTitle: str(p.album),
+            albumArtist: str(p.albumArtist),
+            url: "",
+            artworkURLTemplate: "",
+            duration: num(p.duration),
+            genres: str(p.genre).length ? [str(p.genre)] : [],
+            hasLyrics: false,
+            hasTimeSyncedLyrics: false,
+            inLibrary: true,
+            persistentID: str(p.persistentID),
+            databaseID: num(p.databaseID),
+            cloudStatus: str(p.cloudStatus),
+            kind: str(p.kind),
+            dateAdded: iso(p.dateAdded),
+            releaseDate: iso(p.releaseDate),
+            playedDate: iso(p.playedDate),
+            playedCount: num(p.playedCount),
+            skippedCount: num(p.skippedCount),
+            favorited: !!p.favorited,
+            disliked: !!p.disliked
+          };
+        }
+        function addGroup(groups, track) {
+          const p = track.properties();
+          if (str(p.mediaKind) !== "song") return;
+          const title = str(p.album);
+          if (title.length === 0) return;
+          const artistName = str(p.albumArtist) || str(p.artist);
+          const key = title + "\\u0000" + artistName;
+          if (!groups.has(key)) {
+            groups.set(key, { title, artistName, songs: [] });
+          }
+          groups.get(key).songs.push(songValue(track));
+        }
+        const album = \(albumLiteral);
+        const artist = \(artistLiteral);
+        const albumNeedle = album.toLocaleLowerCase();
+        const artistNeedle = artist.toLocaleLowerCase();
+        const limit = \(limitLiteral);
+        const playlistName = \(playlistLiteral);
+        const Music = Application("Music");
+        let trackSpecifier;
+        if (playlistName.length > 0) {
+          const playlistNeedle = playlistName.toLocaleLowerCase();
+          const matches = Music.playlists().filter(p => str(p.properties().name).toLocaleLowerCase() === playlistNeedle);
+          if (matches.length === 0) throw new Error("playlist not found: " + playlistName);
+          if (matches.length > 1) throw new Error("playlist is ambiguous: " + playlistName);
+          trackSpecifier = matches[0].tracks;
+        } else {
+          trackSpecifier = Music.libraryPlaylists[0].tracks;
+        }
+
+        let candidates = [];
+        if (album.length > 0) {
+          candidates = trackSpecifier.whose({album: album})();
+          if (candidates.length === 0) {
+            candidates = trackSpecifier.whose({album: {_contains: album}})();
+          }
+        } else if (artist.length > 0) {
+          candidates = trackSpecifier.whose({artist: {_contains: artist}})();
+        } else if (limit !== null) {
+          const wantedAlbums = [];
+          const seenAlbums = new Set();
+          for (let i = 0; i < trackSpecifier.length && wantedAlbums.length < limit; i++) {
+            const p = trackSpecifier[i].properties();
+            if (str(p.mediaKind) !== "song") continue;
+            const title = str(p.album);
+            if (title.length === 0 || seenAlbums.has(title)) continue;
+            seenAlbums.add(title);
+            wantedAlbums.push(title);
+          }
+          for (const title of wantedAlbums) {
+            candidates.push(...trackSpecifier.whose({album: title})());
+          }
+        } else {
+          candidates = trackSpecifier();
+        }
+
+        const groups = new Map();
+        for (const track of candidates) {
+          const p = track.properties();
+          if (!includes(p.album, albumNeedle)) continue;
+          if (!includes(str(p.albumArtist) || str(p.artist), artistNeedle) && !includes(p.artist, artistNeedle)) continue;
+          addGroup(groups, track);
+        }
+        let rows = Array.from(groups.values()).map(group => ({
+          title: group.title,
+          artistName: group.artistName,
+          songCount: group.songs.length,
+          songs: group.songs
+        }));
+        if (album.length === 0 && artist.length > 0) {
+          rows.sort((a, b) => a.title.localeCompare(b.title) || a.artistName.localeCompare(b.artistName));
+        }
+        if (limit !== null) rows = rows.slice(0, limit);
+        JSON.stringify(rows);
+        """
     }
 
     private static func matchingSongsScript(

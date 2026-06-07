@@ -367,7 +367,7 @@ struct MusicSongsCommand: ParsableCommand {
         abstract: "List songs from the local Apple Music library."
     )
 
-    @Argument(help: "Optional key=value parameters. Accepts artist= album= playlist= count limit=10 format=json.")
+    @Argument(help: "Optional key=value parameters. Accepts artist= album= playlist= count limit=10 limit=all format=json.")
     var arguments: [String] = []
 
     @Option(help: "Maximum rows to print.")
@@ -381,11 +381,16 @@ struct MusicSongsCommand: ParsableCommand {
 
     func run() throws {
         let parameters = CommandParameters(arguments)
+        if try shouldUseFastMusicSongCount(parameters: parameters, musicDatabase: musicDatabase, explicitLimit: limit) {
+            print(try AppleMusicLibrary().songCount(playlist: parameters.value("playlist")))
+            return
+        }
+
         let songs = try rootMusicSongs(
             parameters: parameters,
             musicDatabase: musicDatabase,
             libraryOnly: true,
-            limit: limit ?? parameters.intValue("limit")
+            limit: musicDisplayLimit(option: limit, parameters: parameters)
         )
         if parameters.boolFlag("count") || parameters.boolFlag("total") {
             print(songs.count)
@@ -423,7 +428,7 @@ struct MusicAlbumsCommand: ParsableCommand {
         abstract: "List albums from the local Apple Music library."
     )
 
-    @Argument(help: "Optional key=value parameters. Accepts artist= album= count limit=10 format=json.")
+    @Argument(help: "Optional key=value parameters. Accepts artist= album= count limit=10 limit=all format=json.")
     var arguments: [String] = []
 
     @Option(help: "Maximum rows to print.")
@@ -441,7 +446,7 @@ struct MusicAlbumsCommand: ParsableCommand {
             parameters: parameters,
             musicDatabase: musicDatabase,
             libraryOnly: true,
-            limit: limit ?? parameters.intValue("limit")
+            limit: musicDisplayLimit(option: limit, parameters: parameters)
         )
         if parameters.boolFlag("count") || parameters.boolFlag("total") {
             print(albums.count)
@@ -479,7 +484,7 @@ struct MusicSearchCommand: ParsableCommand {
         abstract: "Search songs in the local Apple Music library."
     )
 
-    @Argument(help: "Search text and optional key=value parameters. Accepts query=Sahiba artist= album= count limit=10 format=json.")
+    @Argument(help: "Search text and optional key=value parameters. Accepts query=Sahiba artist= album= count limit=10 limit=all format=json.")
     var arguments: [String] = []
 
     @Option(help: "Search query.")
@@ -504,7 +509,7 @@ struct MusicSearchCommand: ParsableCommand {
             parameters: parameters,
             musicDatabase: musicDatabase,
             libraryOnly: false,
-            limit: limit ?? parameters.intValue("limit")
+            limit: musicDisplayLimit(option: limit, parameters: parameters)
         )
         if parameters.boolFlag("count") || parameters.boolFlag("total") {
             print(songs.count)
@@ -531,17 +536,15 @@ struct MusicList: ParsableCommand {
 
     func run() throws {
         let parameters = CommandParameters(arguments)
-        let catalog = try resolveMusicCatalog(musicDatabase ?? parameters.value("musicDatabase") ?? parameters.value("database"))
-        let requestedLimit = limit ?? parameters.intValue("limit")
         let query = parameters.value("query") ?? parameters.firstPositional
-        let songs: [MusicSong]
-        if let query, !query.isEmpty {
-            songs = try catalog.search(query, limit: requestedLimit)
-        } else if let requestedLimit {
-            songs = Array(try catalog.songs().prefix(max(0, requestedLimit)))
-        } else {
-            songs = try catalog.songs()
-        }
+        let requestedLimit = musicDisplayLimit(option: limit, parameters: parameters)
+        let effectiveParameters = query.map { parameters.setting("query", to: $0) } ?? parameters
+        let songs = try rootMusicSongs(
+            parameters: effectiveParameters,
+            musicDatabase: musicDatabase,
+            libraryOnly: false,
+            limit: requestedLimit
+        )
         print(try formatMusicSongs(songs, format: format ?? parameters.value("format") ?? "text"))
     }
 }
@@ -569,8 +572,13 @@ struct MusicSearch: ParsableCommand {
         guard let query = query ?? parameters.value("query") ?? parameters.firstPositional else {
             throw ValidationError("music search requires query=Song")
         }
-        let catalog = try resolveMusicCatalog(musicDatabase ?? parameters.value("musicDatabase") ?? parameters.value("database"))
-        let songs = try catalog.search(query, limit: limit ?? parameters.intValue("limit"))
+        let effectiveParameters = parameters.setting("query", to: query)
+        let songs = try rootMusicSongs(
+            parameters: effectiveParameters,
+            musicDatabase: musicDatabase,
+            libraryOnly: false,
+            limit: musicDisplayLimit(option: limit, parameters: parameters)
+        )
         print(try formatMusicSongs(songs, format: format ?? parameters.value("format") ?? "text"))
     }
 }
@@ -592,8 +600,10 @@ struct MusicGet: ParsableCommand {
         guard let selector = parameters.value("id") ?? parameters.value("song") ?? parameters.firstPositional else {
             throw ValidationError("music get requires a song selector, for example id=1129452297")
         }
-        let catalog = try resolveMusicCatalog(musicDatabase ?? parameters.value("musicDatabase") ?? parameters.value("database"))
-        let song = try catalog.resolveSong(selector)
+        let song = try resolveRootMusicSong(
+            parameters: parameters.setting("id", to: selector),
+            musicDatabase: musicDatabase
+        )
         print(try formatMusicSong(song, format: format ?? parameters.value("format") ?? "text"))
     }
 }
@@ -1200,8 +1210,14 @@ private func rootMusicSongs(
         )
     }
 
-    let songs = try AppleMusicLibrary().songs(playlist: parameters.value("playlist"))
-    return filterMusicSongs(songs, parameters: parameters, limit: limit)
+    let songs = try AppleMusicLibrary().filteredSongs(
+        query: parameters.value("query"),
+        artist: parameters.value("artist"),
+        album: parameters.value("album"),
+        limit: limit,
+        playlist: parameters.value("playlist")
+    )
+    return filterMusicSongs(songs, parameters: parameters, limit: nil)
 }
 
 private func resolveRootMusicSong(parameters: CommandParameters, musicDatabase: String?) throws -> MusicSong {
@@ -1262,9 +1278,22 @@ private func rootMusicAlbums(
         )
     }
 
-    let songs = try AppleMusicLibrary().songs(playlist: parameters.value("playlist"))
-    let filtered = filterMusicSongs(songs, parameters: parameters, limit: nil)
-    return musicAlbums(from: filtered, limit: limit)
+    let albums = try AppleMusicLibrary().albums(
+        album: parameters.value("album") ?? parameters.value("title"),
+        artist: parameters.value("artist"),
+        limit: limit,
+        playlist: parameters.value("playlist")
+    )
+    return albums.map { album in
+        MusicAlbumSummary(
+            id: "",
+            title: album.title,
+            artistName: album.artistName,
+            songCount: album.songCount,
+            inLibrary: true,
+            songs: album.songs
+        )
+    }
 }
 
 private func resolveRootMusicAlbum(parameters: CommandParameters, musicDatabase: String?) throws -> MusicAlbumSummary {
@@ -1274,7 +1303,17 @@ private func resolveRootMusicAlbum(parameters: CommandParameters, musicDatabase:
         ?? parameters.value("title")
         ?? parameters.firstPositional
     )
-    var albums = try rootMusicAlbums(parameters: parameters, musicDatabase: musicDatabase, libraryOnly: false, limit: nil)
+    let lookupParameters: CommandParameters
+    if let selector,
+       parameters.value("id") == nil,
+       parameters.value("album") == nil,
+       parameters.value("title") == nil {
+        lookupParameters = parameters.setting("album", to: selector)
+    } else {
+        lookupParameters = parameters
+    }
+
+    var albums = try rootMusicAlbums(parameters: lookupParameters, musicDatabase: musicDatabase, libraryOnly: false, limit: nil)
     if let selector {
         albums = albums.filter { musicAlbum($0, matches: selector) }
     }
@@ -1291,6 +1330,31 @@ private func resolveRootMusicAlbum(parameters: CommandParameters, musicDatabase:
 
 private func musicDatabasePath(option: String?, parameters: CommandParameters) -> String? {
     nonEmptyTrimmed(option ?? parameters.value("musicDatabase") ?? parameters.value("database"))
+}
+
+private func musicDisplayLimit(option: Int?, parameters: CommandParameters) -> Int? {
+    if let raw = parameters.value("limit")?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+       ["all", "none", "unlimited"].contains(raw) {
+        return nil
+    }
+    return option ?? parameters.intValue("limit") ?? 20
+}
+
+private func shouldUseFastMusicSongCount(
+    parameters: CommandParameters,
+    musicDatabase: String?,
+    explicitLimit: Int?
+) throws -> Bool {
+    guard explicitLimit == nil,
+          parameters.intValue("limit") == nil,
+          musicDatabasePath(option: musicDatabase, parameters: parameters) == nil,
+          nonEmptyTrimmed(parameters.value("query")) == nil,
+          nonEmptyTrimmed(parameters.value("artist")) == nil,
+          nonEmptyTrimmed(parameters.value("album")) == nil,
+          try discoveredMusicCatalogWithSongs() == nil else {
+        return false
+    }
+    return parameters.boolFlag("count") || parameters.boolFlag("total")
 }
 
 private func discoveredMusicCatalogWithSongs() throws -> SQLiteMusicCatalog? {
@@ -2689,7 +2753,7 @@ private struct TUICommandCatalog {
         TUIParameter(name: "album=", detail: "Filter by album"),
         TUIParameter(name: "playlist=", detail: "Playlist filter, not decoded yet"),
         TUIParameter(name: "count", detail: "Return song count"),
-        TUIParameter(name: "limit=", detail: "Maximum rows"),
+        TUIParameter(name: "limit=", detail: "Maximum rows, or all"),
         TUIParameter(name: "format=json", detail: "JSON output"),
         TUIParameter(name: "format=tsv", detail: "TSV output"),
         TUIParameter(name: "musicDatabase=", detail: "Path to Music SQLite cache")
@@ -2709,7 +2773,7 @@ private struct TUICommandCatalog {
         TUIParameter(name: "artist=", detail: "Filter by artist"),
         TUIParameter(name: "album=", detail: "Filter by album"),
         TUIParameter(name: "count", detail: "Return album count"),
-        TUIParameter(name: "limit=", detail: "Maximum rows"),
+        TUIParameter(name: "limit=", detail: "Maximum rows, or all"),
         TUIParameter(name: "format=json", detail: "JSON output"),
         TUIParameter(name: "musicDatabase=", detail: "Path to Music SQLite cache")
     ]
@@ -2728,7 +2792,7 @@ private struct TUICommandCatalog {
         TUIParameter(name: "artist=", detail: "Filter by artist"),
         TUIParameter(name: "album=", detail: "Filter by album"),
         TUIParameter(name: "count", detail: "Return song count"),
-        TUIParameter(name: "limit=", detail: "Maximum rows"),
+        TUIParameter(name: "limit=", detail: "Maximum rows, or all"),
         TUIParameter(name: "format=json", detail: "JSON output"),
         TUIParameter(name: "format=tsv", detail: "TSV output"),
         TUIParameter(name: "musicDatabase=", detail: "Path to Music SQLite cache")

@@ -25,7 +25,7 @@
 ## Apple Music
 
 - Current library prototype uses Music.app automation because `Library.musicdb` is Apple's binary `hfma` format, not SQLite.
-- Decode `Library.musicdb` directly or add a cached local index so `music:songs` does not need an ~11s Music.app automation scan.
+- Decode `Library.musicdb` directly or add a cached local index so exhaustive `music:* limit=all` commands do not need slow Music.app automation scans.
 - Decide whether Markway should support online MusicKit search in addition to local library reads.
 
 ## Obsidian Plugin
