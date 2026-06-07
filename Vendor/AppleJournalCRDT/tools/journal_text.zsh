@@ -7,7 +7,7 @@ build_dir="$workspace/.build"
 binary="$build_dir/journal_text"
 shim_object="$build_dir/crdt_shims.o"
 converter_bundle="$build_dir/JournalShareExtension_as_bundle"
-converter_source="/System/Applications/Journal.app/Contents/PlugIns/JournalShareExtension.appex/Contents/MacOS/JournalShareExtension"
+converter_source="${JOURNAL_TEXT_CONVERTER_SOURCE:-/System/Applications/Journal.app/Contents/PlugIns/JournalShareExtension.appex/Contents/MacOS/JournalShareExtension}"
 
 mkdir -p "$build_dir"
 
@@ -44,10 +44,18 @@ elif [[ "$script_dir/journal_text.swift" -nt "$binary" || "$script_dir/crdt_shim
 fi
 
 if [[ "$needs_converter" == true ]]; then
-  lipo -thin "$converter_arch" "$converter_source" -output "$converter_bundle"
-  /usr/bin/perl -e 'open my $fh, "+<", $ARGV[0] or die $!; binmode $fh; seek $fh, 12, 0; print $fh pack("V", 8); close $fh' "$converter_bundle"
-  codesign -f -s - "$converter_bundle" >/dev/null
-  needs_build=true
+  if [[ -f "$converter_source" ]]; then
+    lipo -thin "$converter_arch" "$converter_source" -output "$converter_bundle"
+    /usr/bin/perl -e 'open my $fh, "+<", $ARGV[0] or die $!; binmode $fh; seek $fh, 12, 0; print $fh pack("V", 8); close $fh' "$converter_bundle"
+    codesign -f -s - "$converter_bundle" >/dev/null
+    needs_build=true
+  elif [[ "${JOURNAL_TEXT_ALLOW_MISSING_CONVERTER:-}" == "1" ]]; then
+    print -u2 "warning: Journal rich-text converter source not found; building journal_text without bundled converter"
+  else
+    print -u2 "Journal rich-text converter source not found: $converter_source"
+    print -u2 "Set JOURNAL_TEXT_ALLOW_MISSING_CONVERTER=1 to build without the optional converter."
+    exit 1
+  fi
 fi
 
 if [[ "$needs_build" == true ]]; then

@@ -272,7 +272,7 @@ func bootstrapJournalShared() throws {
     try registerTransformer("MergeableJournalAttributesTransformer", as: "MergeableJournalAttributesTransformer")
     try registerTransformer("MergeableAppStorageTransformer", as: "MergeableAppStorageTransformer")
     #if targetEnvironment(macCatalyst)
-    try bootstrapJournalRichTextConverter()
+    try bootstrapJournalRichTextConverterIfAvailable()
     #endif
 }
 
@@ -443,10 +443,25 @@ final class JournalRichTextConverter {
 
 var richTextConverter: JournalRichTextConverter?
 
-func bootstrapJournalRichTextConverter() throws {
+func bootstrapJournalRichTextConverterIfAvailable() throws {
     let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().path
-    let bundlePath = "\(executableDirectory)/JournalShareExtension_as_bundle"
-    richTextConverter = try JournalRichTextConverter(bundlePath: bundlePath)
+    let bundlePath = ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_CONVERTER_BUNDLE"]
+        ?? "\(executableDirectory)/JournalShareExtension_as_bundle"
+    guard FileManager.default.isReadableFile(atPath: bundlePath) else {
+        if ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"] == "1" {
+            throw ToolError.invalid("missing Journal rich-text converter bundle: \(bundlePath)")
+        }
+        return
+    }
+
+    do {
+        richTextConverter = try JournalRichTextConverter(bundlePath: bundlePath)
+    } catch {
+        if ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"] == "1" {
+            throw error
+        }
+        fputs("warning: Journal rich-text converter unavailable: \(error)\n", stderr)
+    }
 }
 #endif
 
