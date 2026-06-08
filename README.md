@@ -128,7 +128,7 @@ Run `markway` with no arguments for the TUI-style prompt.
 
 The Obsidian plugin does not receive Full Disk Access. Instead:
 
-1. The plugin writes private JSON requests into `~/Library/Application Support/Markway/Bridge/<vault-hash>`.
+1. The plugin writes private JSON requests into `<vault>/.obsidian/plugins/markway/bridge`.
 2. Markway.app or its LaunchAgent reads those requests.
 3. The native Markway helper performs Apple Journal operations with the app's permissions.
 4. Responses and private events flow back through the same local bridge.

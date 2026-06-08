@@ -3,6 +3,37 @@ import XCTest
 @testable import MarkwayCore
 
 final class MarkwayFileBridgeTests: XCTestCase {
+    func testDefaultBridgeLivesInsideVaultPluginDataDirectory() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(vaultURL: temp, journal: backend)
+
+        XCTAssertEqual(
+            bridge.bridgeURL.path,
+            temp
+                .appendingPathComponent(".obsidian", isDirectory: true)
+                .appendingPathComponent("plugins", isDirectory: true)
+                .appendingPathComponent("markway", isDirectory: true)
+                .appendingPathComponent("bridge", isDirectory: true)
+                .path
+        )
+
+        try bridge.prepare()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bridge.requestsURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bridge.responsesURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bridge.eventsURL.path))
+    }
+
+    func testExplicitBridgeBaseKeepsHashedVaultDirectory() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridgeBaseURL = temp.appendingPathComponent("BridgeBase", isDirectory: true)
+        let bridge = MarkwayFileBridge(vaultURL: temp, journal: backend, bridgeBaseURL: bridgeBaseURL)
+
+        XCTAssertEqual(bridge.bridgeURL.deletingLastPathComponent().path, bridgeBaseURL.path)
+        XCTAssertNotEqual(bridge.bridgeURL.path, bridgeBaseURL.path)
+    }
+
     func testProcessesJournalPushRequestThroughBackend() throws {
         let temp = try temporaryDirectory()
         let note = temp.appendingPathComponent("Entry.md")

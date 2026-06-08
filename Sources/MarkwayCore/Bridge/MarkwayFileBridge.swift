@@ -117,15 +117,21 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
     public let vaultURL: URL
     public let journal: Backend
     public let bridgeBaseURL: URL
+    private let usesVaultLocalBridge: Bool
 
     public init(vaultURL: URL, journal: Backend, bridgeBaseURL: URL? = nil) {
         self.vaultURL = vaultURL.resolvingSymlinksInPath().standardizedFileURL
         self.journal = journal
-        self.bridgeBaseURL = bridgeBaseURL ?? Self.defaultBridgeBaseURL()
+        self.bridgeBaseURL = bridgeBaseURL ?? Self.defaultBridgeBaseURL(vaultURL: self.vaultURL)
+        self.usesVaultLocalBridge = bridgeBaseURL == nil
     }
 
     public var bridgeURL: URL {
-        bridgeBaseURL.appendingPathComponent(Self.bridgeID(for: vaultURL.path), isDirectory: true)
+        if usesVaultLocalBridge {
+            return bridgeBaseURL
+        }
+
+        return bridgeBaseURL.appendingPathComponent(Self.bridgeID(for: vaultURL.path), isDirectory: true)
     }
 
     public var requestsURL: URL {
@@ -308,12 +314,12 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     }
 
-    private static func defaultBridgeBaseURL() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library", isDirectory: true)
-            .appendingPathComponent("Application Support", isDirectory: true)
-            .appendingPathComponent("Markway", isDirectory: true)
-            .appendingPathComponent("Bridge", isDirectory: true)
+    private static func defaultBridgeBaseURL(vaultURL: URL) -> URL {
+        vaultURL
+            .appendingPathComponent(".obsidian", isDirectory: true)
+            .appendingPathComponent("plugins", isDirectory: true)
+            .appendingPathComponent("markway", isDirectory: true)
+            .appendingPathComponent("bridge", isDirectory: true)
     }
 
     private static func bridgeID(for vaultPath: String) -> String {
