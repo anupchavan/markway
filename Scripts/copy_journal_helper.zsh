@@ -61,8 +61,8 @@ fi
 
 if [[ "${CODE_SIGNING_ALLOWED:-}" != "NO" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" && "${EXPANDED_CODE_SIGN_IDENTITY}" != "-" ]]; then
   if [[ -f "$helpers_dir/JournalShareExtension_as_bundle" ]]; then
-    codesign --force --timestamp=none --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/JournalShareExtension_as_bundle"
+    codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/JournalShareExtension_as_bundle"
   fi
-  codesign --force --timestamp=none --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/journal_text"
-  codesign --force --timestamp=none --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/markway"
+  codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/journal_text"
+  codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/markway"
 fi

@@ -47,8 +47,32 @@ jobs:
       - name: Install build tools
         run: brew install xcodegen
 
+      - name: Validate release signing secrets
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_CERTIFICATE_BASE64 \
+            APPLE_CERTIFICATE_PASSWORD \
+            KEYCHAIN_PASSWORD \
+            APPLE_TEAM_ID \
+            DEVELOPER_ID_APPLICATION \
+            APPLE_ID \
+            APPLE_APP_SPECIFIC_PASSWORD
+          do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required release signing secrets:\n' >&2
+            printf '  %s\n' "${missing[@]}" >&2
+            printf '\nMarkway release DMGs must be Developer ID signed and notarized; unsigned GitHub downloads are blocked by Gatekeeper.\n' >&2
+            exit 1
+          fi
+
       - name: Import Developer ID certificate
-        if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' }}
         run: |
           set -euo pipefail
           keychain="$RUNNER_TEMP/markway-signing.keychain-db"
@@ -75,18 +99,11 @@ jobs:
             ONLY_ACTIVE_ARCH=NO
             MARKWAY_UPDATE_FEED_URL="$MARKWAY_UPDATE_FEED_URL"
             MARKWAY_SPARKLE_PUBLIC_ED_KEY="$MARKWAY_SPARKLE_PUBLIC_ED_KEY"
+            CODE_SIGN_STYLE=Manual
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
+            CODE_SIGN_IDENTITY="$DEVELOPER_ID_APPLICATION"
+            OTHER_CODE_SIGN_FLAGS="--timestamp"
           )
-
-          if [[ -n "${APPLE_CERTIFICATE_BASE64:-}" ]]; then
-            build_args+=(
-              CODE_SIGN_STYLE=Manual
-              DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
-              CODE_SIGN_IDENTITY="$DEVELOPER_ID_APPLICATION"
-              OTHER_CODE_SIGN_FLAGS="--timestamp"
-            )
-          else
-            build_args+=(CODE_SIGNING_ALLOWED=NO)
-          fi
 
           xcodebuild \
             -scheme Markway \
@@ -95,6 +112,16 @@ jobs:
             -derivedDataPath "$PWD/build/$ARCH" \
             "${build_args[@]}" \
             build
+
+      - name: Verify app signature before packaging
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          app="$PWD/build/$ARCH/Build/Products/Release/Markway.app"
+          codesign --verify --deep --strict --verbose=4 "$app"
+          codesign -dv --verbose=4 "$app" 2>&1 | tee "$RUNNER_TEMP/markway-codesign.txt"
+          grep -q "Authority=Developer ID Application" "$RUNNER_TEMP/markway-codesign.txt"
 
       - name: Create DMG
         env:
@@ -109,7 +136,6 @@ jobs:
             --volume-name "Markway ${RELEASE_TAG}"
 
       - name: Notarize DMG
-        if: ${{ env.APPLE_CERTIFICATE_BASE64 != '' && env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
         env:
           ARCH: ${{ matrix.arch }}
         run: |
@@ -121,6 +147,8 @@ jobs:
             --team-id "$APPLE_TEAM_ID" \
             --wait
           xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl -a -vvv -t open --context context:primary-signature "$dmg"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
