@@ -11,17 +11,21 @@
 		1CB23205E3BFE4D5437BB378 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 6035E49ADA7615C2C91D22D8 /* Sparkle */; };
 		249756768EA768C7F125D374 /* MarkwaySidebar.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA5BD2D5700625B8CEA82639 /* MarkwaySidebar.swift */; };
 		289C736162DE491E5C70A2DA /* MarkwayTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = D50335ED743EAD95C0B7269F /* MarkwayTheme.swift */; };
+		44EF05AE4340274F266DC0A3 /* JournalAccessChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10862DE9F85FC45B65239B79 /* JournalAccessChecker.swift */; };
 		6828241E4172D336354C66AA /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AE344D4376FE9F743347071E /* Assets.xcassets */; };
 		7D04FFB92D7D252A6B4BE3B8 /* MarkwayLogReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88A496908FC4AE296D6E2D06 /* MarkwayLogReader.swift */; };
 		9026A4521015DB3E76541E32 /* MarkwayCore in Frameworks */ = {isa = PBXBuildFile; productRef = 60CE89BDF6C87A295C7E9F81 /* MarkwayCore */; };
 		98618B5742D9B5EBE0FFC85A /* MarkwayUpdater.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17641B765A2D021922E8D3AA /* MarkwayUpdater.swift */; };
 		A020E9483EE2863C45B2BB92 /* MarkwayPages.swift in Sources */ = {isa = PBXBuildFile; fileRef = B559D8F23C8188B9BCC139DB /* MarkwayPages.swift */; };
 		CE64E5C06A73EC51E12C23E3 /* MarkwayApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A8F6CA1B4AC36A032ADA65 /* MarkwayApp.swift */; };
+		D8087071EE34A3261114543B /* CommandLineToolInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FA44B53C9FBF2D8870B430A /* CommandLineToolInstaller.swift */; };
 		DB7353981FF070A49726B7A0 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE4120F502F43EAEE116D8A4 /* ContentView.swift */; };
 		FBA92321277519576E965FDC /* MarkwaySection.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1CD47D19655C2171C8E9412 /* MarkwaySection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0FA44B53C9FBF2D8870B430A /* CommandLineToolInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandLineToolInstaller.swift; sourceTree = "<group>"; };
+		10862DE9F85FC45B65239B79 /* JournalAccessChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalAccessChecker.swift; sourceTree = "<group>"; };
 		17641B765A2D021922E8D3AA /* MarkwayUpdater.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkwayUpdater.swift; sourceTree = "<group>"; };
 		3C0660685B2B7E5E0BE47B9B /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		7213FA3ECF010BFFF04C3DAE /* Markway.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Markway.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -62,8 +66,10 @@
 			isa = PBXGroup;
 			children = (
 				AE344D4376FE9F743347071E /* Assets.xcassets */,
+				0FA44B53C9FBF2D8870B430A /* CommandLineToolInstaller.swift */,
 				FE4120F502F43EAEE116D8A4 /* ContentView.swift */,
 				3C0660685B2B7E5E0BE47B9B /* Info.plist */,
+				10862DE9F85FC45B65239B79 /* JournalAccessChecker.swift */,
 				7F5CB78FA03B38EBC18A2CDD /* LaunchAgentController.swift */,
 				E5A8F6CA1B4AC36A032ADA65 /* MarkwayApp.swift */,
 				88A496908FC4AE296D6E2D06 /* MarkwayLogReader.swift */,
@@ -195,7 +201,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D8087071EE34A3261114543B /* CommandLineToolInstaller.swift in Sources */,
 				DB7353981FF070A49726B7A0 /* ContentView.swift in Sources */,
+				44EF05AE4340274F266DC0A3 /* JournalAccessChecker.swift in Sources */,
 				01B990B45B6506554B70F839 /* LaunchAgentController.swift in Sources */,
 				CE64E5C06A73EC51E12C23E3 /* MarkwayApp.swift in Sources */,
 				7D04FFB92D7D252A6B4BE3B8 /* MarkwayLogReader.swift in Sources */,

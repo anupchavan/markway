@@ -7,9 +7,12 @@ struct GeneralPage: View {
     let detail: String
     let statusSymbolName: String
     let statusIsError: Bool
+    let journalAccess: JournalAccessState
     let isConfiguring: Bool
     var chooseVault: () -> Void
     var configureVault: () -> Void
+    var openFullDiskAccess: () -> Void
+    var refreshJournalAccess: () -> Void
 
     var body: some View {
         ScrollView {
@@ -19,7 +22,11 @@ struct GeneralPage: View {
                     subtitle: "Connect your vault and keep the background bridge ready."
                 )
                 vaultPanel
-                statusPanel
+                if journalAccess.denialMessage != nil {
+                    journalAccessPanel
+                } else {
+                    statusPanel
+                }
             }
             .padding(34)
             .frame(maxWidth: 760, alignment: .leading)
@@ -75,6 +82,32 @@ struct GeneralPage: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var journalAccessPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: "lock.shield.fill")
+                    .foregroundStyle(.orange)
+                Text("Apple Journal access is needed.")
+                    .font(.callout)
+            }
+
+            if let message = journalAccess.denialMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Button("Open Full Disk Access", action: openFullDiskAccess)
+                    .buttonStyle(.borderedProminent)
+                Button("Check Again", action: refreshJournalAccess)
+                    .buttonStyle(.bordered)
+            }
+            .controlSize(.large)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

@@ -40,7 +40,7 @@ jobs:
         include:
           - name: Apple Silicon
             arch: arm64
-            runner: macos-15
+            runner: macos-26
     steps:
       - uses: actions/checkout@v6
 
@@ -169,6 +169,7 @@ jobs:
             --password "$APPLE_APP_SPECIFIC_PASSWORD" \
             --team-id "$APPLE_TEAM_ID" \
             --wait \
+            --timeout 2h \
             --output-format json | tee "$submit_json"
           submit_exit=${PIPESTATUS[0]}
           set -e

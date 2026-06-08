@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var detail = ""
     @State private var logText = MarkwayLogReader.journalLogTail()
     @State private var isConfiguring = false
+    @State private var journalAccess: JournalAccessState = .checking
 
     var body: some View {
         NavigationSplitView {
@@ -40,6 +41,8 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            installCommandLineTool()
+            updateJournalAccessState()
             configureFromCurrentVaultPathIfPresent()
             refreshLogs()
         }
@@ -59,9 +62,12 @@ struct ContentView: View {
                 detail: detail,
                 statusSymbolName: statusSymbolName,
                 statusIsError: statusIsError,
+                journalAccess: journalAccess,
                 isConfiguring: isConfiguring,
                 chooseVault: chooseVault,
-                configureVault: configureFromCurrentVaultPath
+                configureVault: configureFromCurrentVaultPath,
+                openFullDiskAccess: openFullDiskAccess,
+                refreshJournalAccess: refreshJournalAccess
             )
         case .journal:
             JournalPage(logText: logText)
@@ -71,7 +77,10 @@ struct ContentView: View {
     }
 
     private var statusIsError: Bool {
-        detail.hasPrefix("Error:")
+        if case .denied = journalAccess, vaultURL != nil {
+            return true
+        }
+        return detail.hasPrefix("Error:")
     }
 
     private var statusSymbolName: String {
@@ -116,6 +125,11 @@ struct ContentView: View {
 
         DispatchQueue.global(qos: .userInitiated).async {
             let result = Result {
+                let access = JournalAccessChecker.check()
+                guard access.isGranted else {
+                    throw ValidationError(access.denialMessage ?? "Markway needs Full Disk Access to read Apple Journal.")
+                }
+
                 try validateVault(vaultURL)
                 UserDefaults.standard.set(vaultURL.path, forKey: "vaultPath")
 
@@ -130,6 +144,7 @@ struct ContentView: View {
                 isConfiguring = false
                 switch result {
                 case .success:
+                    journalAccess = .granted
                     vaultPath = vaultURL.path
                     status = "Background sync is ready."
                     detail = ""
@@ -137,8 +152,37 @@ struct ContentView: View {
                 case .failure(let error):
                     status = "Background sync needs attention."
                     detail = "Error: \(error)"
+                    journalAccess = JournalAccessChecker.check()
                 }
             }
+        }
+    }
+
+    private func refreshJournalAccess() {
+        let access = updateJournalAccessState()
+        if access.isGranted,
+           vaultURL != nil,
+           status != "Background sync is ready.",
+           !isConfiguring {
+            configureFromCurrentVaultPath()
+        }
+    }
+
+    @discardableResult
+    private func updateJournalAccessState() -> JournalAccessState {
+        let access = JournalAccessChecker.check()
+        journalAccess = access
+        return access
+    }
+
+    private func openFullDiskAccess() {
+        JournalAccessChecker.openFullDiskAccessSettings()
+        refreshJournalAccess()
+    }
+
+    private func installCommandLineTool() {
+        DispatchQueue.global(qos: .utility).async {
+            _ = CommandLineToolInstaller.installBundledCLI()
         }
     }
 
