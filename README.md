@@ -172,8 +172,8 @@ Intel builds are not published yet because the current Apple Journal CRDT shim i
 Short version:
 
 ```zsh
-git tag v0.1.0
-git push origin v0.1.0
+git tag 0.1.1
+git push origin 0.1.1
 ```
 
 For public distribution, configure Developer ID signing and notarization secrets before publishing the draft release.
