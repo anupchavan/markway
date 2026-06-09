@@ -159,7 +159,7 @@ public struct JournalTextTool: JournalBackend {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
-        process.environment = Self.sanitizedSubprocessEnvironment()
+        process.environment = Self.subprocessEnvironment(for: arguments)
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -185,6 +185,24 @@ public struct JournalTextTool: JournalBackend {
         environment.filter { key, _ in
             !isUnsafeSubprocessEnvironmentKey(key)
         }
+    }
+
+    static func subprocessEnvironment(
+        for arguments: [String],
+        base environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        var result = sanitizedSubprocessEnvironment(environment)
+        if requiresRichTextConverter(arguments) {
+            result["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"] = "1"
+        }
+        return result
+    }
+
+    private static func requiresRichTextConverter(_ arguments: [String]) -> Bool {
+        guard let command = arguments.first else {
+            return false
+        }
+        return command == "add" || command == "update"
     }
 
     private static func candidateURLs(from start: URL) -> [URL] {

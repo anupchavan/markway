@@ -443,24 +443,207 @@ final class JournalRichTextConverter {
 
 var richTextConverter: JournalRichTextConverter?
 
-func bootstrapJournalRichTextConverterIfAvailable() throws {
-    let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().path
-    let bundlePath = ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_CONVERTER_BUNDLE"]
-        ?? "\(executableDirectory)/JournalShareExtension_as_bundle"
-    guard FileManager.default.isReadableFile(atPath: bundlePath) else {
-        if ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"] == "1" {
-            throw ToolError.invalid("missing Journal rich-text converter bundle: \(bundlePath)")
-        }
-        return
+func systemJournalShareExtensionPath() -> String {
+    "/System/Applications/Journal.app/Contents/PlugIns/JournalShareExtension.appex/Contents/MacOS/JournalShareExtension"
+}
+
+func preparedJournalConverterPath() -> String {
+    let homePath = ProcessInfo.processInfo.environment["HOME"].flatMap { $0.isEmpty ? nil : $0 }
+        ?? NSHomeDirectory()
+    return URL(fileURLWithPath: homePath, isDirectory: true)
+        .appendingPathComponent("Library", isDirectory: true)
+        .appendingPathComponent("Application Support", isDirectory: true)
+        .appendingPathComponent("Markway", isDirectory: true)
+        .appendingPathComponent("JournalRichText", isDirectory: true)
+        .appendingPathComponent("JournalShareExtension_as_bundle")
+        .path
+}
+
+func readBigEndianUInt32(_ data: Data, _ offset: Int) -> UInt32 {
+    var value: UInt32 = 0
+    for byte in data[offset..<(offset + 4)] {
+        value = (value << 8) | UInt32(byte)
+    }
+    return value
+}
+
+func thinSystemJournalConverter(_ data: Data) throws -> Data {
+    let fatMagic: UInt32 = 0xcafebabe
+    let fatMagic64: UInt32 = 0xcafebabf
+    let cpuTypeARM64: UInt32 = 0x0100000c
+    let cpuTypeX86_64: UInt32 = 0x01000007
+    #if arch(x86_64)
+    let targetCPU = cpuTypeX86_64
+    #else
+    let targetCPU = cpuTypeARM64
+    #endif
+
+    guard data.count >= 8 else {
+        throw ToolError.invalid("Journal converter source is too small")
     }
 
+    let magic = readBigEndianUInt32(data, 0)
+    guard magic == fatMagic || magic == fatMagic64 else {
+        return data
+    }
+
+    let archCount = Int(readBigEndianUInt32(data, 4))
+    let archSize = magic == fatMagic64 ? 32 : 20
+    let headerSize = 8 + (archCount * archSize)
+    guard data.count >= headerSize else {
+        throw ToolError.invalid("Journal converter fat header is truncated")
+    }
+
+    for index in 0..<archCount {
+        let base = 8 + (index * archSize)
+        let cpuType = readBigEndianUInt32(data, base)
+        let offset: UInt64
+        let size: UInt64
+        if magic == fatMagic64 {
+            offset = UInt64(readBigEndianUInt32(data, base + 8)) << 32 | UInt64(readBigEndianUInt32(data, base + 12))
+            size = UInt64(readBigEndianUInt32(data, base + 16)) << 32 | UInt64(readBigEndianUInt32(data, base + 20))
+        } else {
+            offset = UInt64(readBigEndianUInt32(data, base + 8))
+            size = UInt64(readBigEndianUInt32(data, base + 12))
+        }
+
+        guard cpuType == targetCPU else {
+            continue
+        }
+        let dataCount = UInt64(data.count)
+        guard offset <= dataCount, size <= dataCount - offset else {
+            throw ToolError.invalid("Journal converter slice is outside the source binary")
+        }
+
+        return data.subdata(in: Int(offset)..<Int(offset + size))
+    }
+
+    throw ToolError.invalid("Journal converter source does not contain a supported architecture")
+}
+
+func patchMachOFileTypeToBundle(_ data: inout Data) throws {
+    guard data.count >= 16 else {
+        throw ToolError.invalid("Journal converter Mach-O header is truncated")
+    }
+
+    data[12] = 0x08
+    data[13] = 0x00
+    data[14] = 0x00
+    data[15] = 0x00
+}
+
+func runExecutable(_ executable: String, _ arguments: [String]) throws {
+    var pid = pid_t()
+    let cStrings = ([executable] + arguments).map { strdup($0) }
+    defer {
+        for pointer in cStrings {
+            free(pointer)
+        }
+    }
+
+    var argv = cStrings + [nil]
+    let spawnStatus = argv.withUnsafeMutableBufferPointer { buffer in
+        posix_spawn(&pid, executable, nil, nil, buffer.baseAddress, environ)
+    }
+    guard spawnStatus == 0 else {
+        throw POSIXError(POSIXErrorCode(rawValue: spawnStatus) ?? .EIO)
+    }
+
+    var waitStatus: Int32 = 0
+    guard waitpid(pid, &waitStatus, 0) == pid, waitStatus == 0 else {
+        throw ToolError.invalid("\(executable) failed with status \(waitStatus)")
+    }
+}
+
+func prepareSystemJournalConverterIfAvailable() throws -> String? {
+    let sourcePath = systemJournalShareExtensionPath()
+    guard FileManager.default.isReadableFile(atPath: sourcePath) else {
+        return nil
+    }
+
+    let destinationPath = preparedJournalConverterPath()
+    let sourceAttributes = try FileManager.default.attributesOfItem(atPath: sourcePath)
+    let destinationAttributes = try? FileManager.default.attributesOfItem(atPath: destinationPath)
+    if let sourceModified = sourceAttributes[.modificationDate] as? Date,
+       let destinationModified = destinationAttributes?[.modificationDate] as? Date,
+       destinationModified >= sourceModified,
+       FileManager.default.isReadableFile(atPath: destinationPath) {
+        return destinationPath
+    }
+
+    let destinationURL = URL(fileURLWithPath: destinationPath)
+    let directoryURL = destinationURL.deletingLastPathComponent()
+    try FileManager.default.createDirectory(
+        at: directoryURL,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+
+    var converterData = try thinSystemJournalConverter(Data(contentsOf: URL(fileURLWithPath: sourcePath)))
+    try patchMachOFileTypeToBundle(&converterData)
+
+    let temporaryURL = directoryURL.appendingPathComponent(".JournalShareExtension_as_bundle.\(UUID().uuidString).tmp")
+    var didMoveTemporaryFile = false
+    defer {
+        if !didMoveTemporaryFile {
+            try? FileManager.default.removeItem(at: temporaryURL)
+        }
+    }
+    try converterData.write(to: temporaryURL, options: .atomic)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: temporaryURL.path)
+    try runExecutable("/usr/bin/codesign", ["-f", "-s", "-", temporaryURL.path])
+    if FileManager.default.fileExists(atPath: destinationPath) {
+        try FileManager.default.removeItem(at: destinationURL)
+    }
+    try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
+    didMoveTemporaryFile = true
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: destinationPath)
+    return destinationPath
+}
+
+func bootstrapJournalRichTextConverterIfAvailable() throws {
+    let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent().path
+    let required = ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"] == "1"
+    var bundlePaths: [String] = []
+    if let explicit = ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_CONVERTER_BUNDLE"] {
+        bundlePaths.append(explicit)
+    }
+    bundlePaths.append("\(executableDirectory)/JournalShareExtension_as_bundle")
+
     do {
-        richTextConverter = try JournalRichTextConverter(bundlePath: bundlePath)
+        if let prepared = try prepareSystemJournalConverterIfAvailable() {
+            bundlePaths.append(prepared)
+        }
     } catch {
-        if ProcessInfo.processInfo.environment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"] == "1" {
+        if required {
             throw error
         }
-        fputs("warning: Journal rich-text converter unavailable: \(error)\n", stderr)
+        fputs("warning: failed to prepare Journal rich-text converter: \(error)\n", stderr)
+    }
+
+    var failures: [String] = []
+    var sawReadableBundle = false
+    for bundlePath in bundlePaths {
+        guard FileManager.default.isReadableFile(atPath: bundlePath) else {
+            continue
+        }
+        sawReadableBundle = true
+        do {
+            richTextConverter = try JournalRichTextConverter(bundlePath: bundlePath)
+            return
+        } catch {
+            failures.append("\(bundlePath): \(error)")
+        }
+    }
+
+    if required, !sawReadableBundle {
+        throw ToolError.invalid("missing Journal rich-text converter bundle")
+    }
+    if required, let failure = failures.first {
+        throw ToolError.invalid("Journal rich-text converter unavailable: \(failure)")
+    }
+    if let failure = failures.first {
+        fputs("warning: Journal rich-text converter unavailable: \(failure)\n", stderr)
     }
 }
 #endif

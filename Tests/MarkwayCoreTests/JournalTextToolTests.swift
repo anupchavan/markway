@@ -21,4 +21,27 @@ final class JournalTextToolTests: XCTestCase {
         XCTAssertEqual(environment["PATH"], "/usr/bin")
         XCTAssertEqual(environment["HOME"], "/Users/test")
     }
+
+    func testAddAndUpdateRequireRichTextConverter() {
+        let addEnvironment = JournalTextTool.subprocessEnvironment(
+            for: ["add", "--title", "Title", "--body", "body.md"],
+            base: ["PATH": "/usr/bin"]
+        )
+        let updateEnvironment = JournalTextTool.subprocessEnvironment(
+            for: ["update", "entry-id", "--body", "body.md"],
+            base: ["PATH": "/usr/bin"]
+        )
+
+        XCTAssertEqual(addEnvironment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"], "1")
+        XCTAssertEqual(updateEnvironment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"], "1")
+    }
+
+    func testReadCommandsDoNotRequireRichTextConverter() {
+        let environment = JournalTextTool.subprocessEnvironment(
+            for: ["get", "entry-id"],
+            base: ["PATH": "/usr/bin"]
+        )
+
+        XCTAssertNil(environment["MARKWAY_JOURNAL_RICH_TEXT_REQUIRED"])
+    }
 }
