@@ -63,6 +63,6 @@ if [[ "${CODE_SIGNING_ALLOWED:-}" != "NO" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-
   if [[ -f "$helpers_dir/JournalShareExtension_as_bundle" ]]; then
     codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/JournalShareExtension_as_bundle"
   fi
-  codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/journal_text"
+  codesign --force --options runtime --timestamp --entitlements "$repo/Config/JournalText.entitlements" --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/journal_text"
   codesign --force --options runtime --timestamp --sign "$EXPANDED_CODE_SIGN_IDENTITY" "$helpers_dir/markway"
 fi

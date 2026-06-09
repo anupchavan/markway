@@ -3,6 +3,8 @@ set -euo pipefail
 
 app_path=""
 identity=""
+repo="${0:A:h:h}"
+journal_text_entitlements="$repo/Config/JournalText.entitlements"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -35,6 +37,11 @@ if [[ ! -d "$app_path" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$journal_text_entitlements" ]]; then
+  print -u2 "Journal helper entitlements not found: $journal_text_entitlements"
+  exit 1
+fi
+
 sign_existing() {
   local target="$1"
   shift
@@ -57,7 +64,11 @@ fi
 helpers_dir="$app_path/Contents/Helpers"
 if [[ -d "$helpers_dir" ]]; then
   for helper in "$helpers_dir"/*(.N); do
-    sign_existing "$helper"
+    if [[ "${helper:t}" == "journal_text" ]]; then
+      sign_existing "$helper" --entitlements "$journal_text_entitlements"
+    else
+      sign_existing "$helper"
+    fi
   done
 fi
 
@@ -72,3 +83,11 @@ if grep -q "com.apple.security.get-task-allow" "$entitlements_file"; then
 fi
 
 codesign --verify --deep --strict --verbose=4 "$app_path"
+
+journal_text_entitlements_file="$(mktemp)"
+trap 'rm -f "$entitlements_file" "$journal_text_entitlements_file"' EXIT
+codesign -d --entitlements :- "$helpers_dir/journal_text" >"$journal_text_entitlements_file" 2>/dev/null || true
+if ! grep -q "com.apple.security.cs.disable-library-validation" "$journal_text_entitlements_file"; then
+  print -u2 "Release journal_text helper is missing com.apple.security.cs.disable-library-validation"
+  exit 1
+fi
