@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 public enum JournalTextToolError: Error, CustomStringConvertible, Sendable {
@@ -130,6 +131,194 @@ public struct JournalTextTool: JournalBackend {
         } catch {
             throw JournalTextToolError.invalidOutput(output)
         }
+    }
+
+    public func photoAttachments(id: String) throws -> [JournalPhotoAttachment] {
+        let output = try runRaw(["attachments", "list", id, "--json"])
+        do {
+            return try Self.parsePhotoAttachments(fromJSON: output)
+        } catch {
+            throw JournalTextToolError.invalidOutput(output)
+        }
+    }
+
+    static func parsePhotoAttachments(fromJSON output: String) throws -> [JournalPhotoAttachment] {
+        let payload = try JSONDecoder().decode(JournalAttachmentListPayload.self, from: Data(output.utf8))
+        return payload.attachments.compactMap { attachment in
+            guard attachment.assetType == "photo",
+                  attachment.isFullyRemoved != true,
+                  attachment.isUndoablyDeleted != true else {
+                return nil
+            }
+            let files = (attachment.fileAttachments ?? [])
+                .sorted { ($0.index ?? 0) < ($1.index ?? 0) }
+                .compactMap { file -> JournalAttachmentFile? in
+                    guard let fileID = file.id, !fileID.isEmpty else {
+                        return nil
+                    }
+                    return JournalAttachmentFile(
+                        id: fileID,
+                        name: file.name ?? "",
+                        relativePath: file.relativePath ?? "",
+                        absolutePath: file.absolutePath ?? "",
+                        exists: file.exists ?? false,
+                        byteLength: file.byteLength
+                    )
+                }
+            return JournalPhotoAttachment(
+                id: attachment.id,
+                source: attachment.source ?? "",
+                isHidden: attachment.isHidden ?? false,
+                isSlim: attachment.isSlim ?? false,
+                assetIdentifier: attachment.metadata?.assetIdentifier ?? "",
+                assetDate: attachment.metadata?.date,
+                createdDate: attachment.createdDate ?? "",
+                suggestionDate: attachment.suggestionDate ?? "",
+                files: files
+            )
+        }
+    }
+
+    public func attachments(id: String) throws -> [JournalGenericAttachment] {
+        let output = try runRaw(["attachments", "list", id, "--json"])
+        do {
+            return try Self.parseGenericAttachments(fromJSON: output)
+        } catch {
+            throw JournalTextToolError.invalidOutput(output)
+        }
+    }
+
+    static func parseGenericAttachments(fromJSON output: String) throws -> [JournalGenericAttachment] {
+        guard
+            let root = try JSONSerialization.jsonObject(with: Data(output.utf8)) as? [String: Any],
+            let rawAttachments = root["attachments"] as? [[String: Any]]
+        else {
+            throw JournalTextToolError.invalidOutput(output)
+        }
+
+        return rawAttachments.compactMap { raw in
+            guard
+                let attachmentID = raw["id"] as? String, !attachmentID.isEmpty,
+                let assetType = raw["assetType"] as? String, !assetType.isEmpty,
+                raw["isFullyRemoved"] as? Bool != true,
+                raw["isUndoablyDeleted"] as? Bool != true
+            else {
+                return nil
+            }
+
+            let files = ((raw["fileAttachments"] as? [[String: Any]]) ?? [])
+                .sorted { (($0["index"] as? Int) ?? 0) < (($1["index"] as? Int) ?? 0) }
+                .compactMap { file -> JournalAttachmentFile? in
+                    guard let fileID = file["id"] as? String, !fileID.isEmpty else {
+                        return nil
+                    }
+                    return JournalAttachmentFile(
+                        id: fileID,
+                        name: file["name"] as? String ?? "",
+                        relativePath: file["relativePath"] as? String ?? "",
+                        absolutePath: file["absolutePath"] as? String ?? "",
+                        exists: file["exists"] as? Bool ?? false,
+                        byteLength: file["byteLength"] as? Int
+                    )
+                }
+
+            let metadata = decodeAttachmentMetadata(raw["metadata"] as? [String: Any] ?? [:], assetType: assetType)
+            return JournalGenericAttachment(
+                id: attachmentID,
+                assetType: assetType,
+                source: raw["source"] as? String ?? "",
+                isHidden: raw["isHidden"] as? Bool ?? false,
+                isSlim: raw["isSlim"] as? Bool ?? false,
+                createdDate: raw["createdDate"] as? String ?? "",
+                suggestionDate: raw["suggestionDate"] as? String ?? "",
+                files: files,
+                metadata: JournalJSONValue(jsonObject: metadata) ?? .object([:])
+            )
+        }
+    }
+
+    /// Turns metadata blobs that only make sense to Apple frameworks into
+    /// template-friendly values. Everything else passes through untouched.
+    static func decodeAttachmentMetadata(_ metadata: [String: Any], assetType: String) -> [String: Any] {
+        var result = metadata
+
+        if assetType == "reflection" {
+            if let prompt = result["prompt"] as? String, let text = decodeBase64RTF(prompt) {
+                result["prompt"] = text
+            }
+            for key in ["colorLight", "colorDark"] {
+                if let archive = result[key] as? String, let hex = decodeBase64ArchivedColor(archive) {
+                    result[key] = hex
+                }
+            }
+        }
+
+        if assetType == "multiPinMap", let visits = result["visitsData"] as? [[String: Any]] {
+            result["visitsData"] = visits.map { visit -> [String: Any] in
+                // The archived MKMapItem blob is large and opaque; drop it.
+                var cleaned = visit
+                cleaned.removeValue(forKey: "mapItemData")
+                return cleaned
+            }
+        }
+
+        return result
+    }
+
+    /// `NSAttributedString(rtf:)` comes from an AppKit category. UI-less
+    /// binaries like the bridge agent never load AppKit on their own —
+    /// category methods reference no linker symbol, so even `import AppKit`
+    /// adds no load command — and calling the initializer then raises an
+    /// uncatchable ObjC exception that crash-loops the agent. Load the
+    /// framework by hand and verify the category arrived before using it.
+    private static let rtfDecodingAvailable: Bool = {
+        dlopen("/System/Library/Frameworks/AppKit.framework/AppKit", RTLD_LAZY)
+        return NSAttributedString.instancesRespond(to: NSSelectorFromString("initWithRTF:documentAttributes:"))
+    }()
+
+    static func decodeBase64RTF(_ base64: String) -> String? {
+        guard Self.rtfDecodingAvailable, let data = Data(base64Encoded: base64) else {
+            return nil
+        }
+        let attributed = NSAttributedString(rtf: data, documentAttributes: nil)
+        return attributed?.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func decodeBase64ArchivedColor(_ base64: String) -> String? {
+        guard
+            let data = Data(base64Encoded: base64),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil),
+            let root = plist as? [String: Any],
+            let objects = root["$objects"] as? [Any]
+        else {
+            return nil
+        }
+
+        for object in objects {
+            guard let dictionary = object as? [String: Any] else {
+                continue
+            }
+            let red = colorComponent(dictionary, doubleKey: "UIRed-Double", fallbackKey: "UIRed")
+            let green = colorComponent(dictionary, doubleKey: "UIGreen-Double", fallbackKey: "UIGreen")
+            let blue = colorComponent(dictionary, doubleKey: "UIBlue-Double", fallbackKey: "UIBlue")
+            if let red, let green, let blue {
+                return String(
+                    format: "#%02X%02X%02X",
+                    Int((red * 255).rounded()),
+                    Int((green * 255).rounded()),
+                    Int((blue * 255).rounded())
+                )
+            }
+        }
+        return nil
+    }
+
+    private static func colorComponent(_ dictionary: [String: Any], doubleKey: String, fallbackKey: String) -> Double? {
+        let value = (dictionary[doubleKey] as? NSNumber) ?? (dictionary[fallbackKey] as? NSNumber)
+        guard let component = value?.doubleValue, component >= 0, component <= 1 else {
+            return nil
+        }
+        return component
     }
 
     public func resolveEntryID(_ selector: String) throws -> String {
@@ -281,15 +470,28 @@ private struct JournalAttachmentPayload: Decodable {
     var isUndoablyDeleted: Bool?
     var createdDate: String?
     var suggestionDate: String?
-    var metadata: JournalMusicMetadataPayload?
+    var metadata: JournalAttachmentMetadataPayload?
+    var fileAttachments: [JournalFileAttachmentPayload]?
 }
 
-private struct JournalMusicMetadataPayload: Decodable {
+private struct JournalAttachmentMetadataPayload: Decodable {
     var song: String?
     var artistName: String?
     var mediaId: String?
     var mediaType: [String: EmptyPayload]?
     var startTime: Double?
+    var assetIdentifier: String?
+    var date: Double?
+}
+
+private struct JournalFileAttachmentPayload: Decodable {
+    var id: String?
+    var name: String?
+    var index: Int?
+    var relativePath: String?
+    var absolutePath: String?
+    var exists: Bool?
+    var byteLength: Int?
 }
 
 private struct EmptyPayload: Decodable {}

@@ -223,6 +223,350 @@ final class MarkwayFileBridgeTests: XCTestCase {
         XCTAssertEqual(backend.musicCalls, ["ENTRY-ID"])
     }
 
+    func testCanReadJournalEntryWithPhotoAttachments() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.photoResults = [
+            JournalPhotoAttachment(
+                id: "PHOTO-ID",
+                source: "suggestionSheet",
+                assetIdentifier: "ASSET-ID:001:token:/var/mobile/Media",
+                createdDate: "2026-06-04T18:09:27Z",
+                files: [
+                    JournalAttachmentFile(
+                        id: "FILE-ID",
+                        name: "image",
+                        relativePath: "ENTRY-ID/PHOTO-ID/photo.heic",
+                        absolutePath: "/tmp/Attachments/ENTRY-ID/PHOTO-ID/photo.heic",
+                        exists: true,
+                        byteLength: 1234
+                    )
+                ]
+            )
+        ]
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let getRequest = MarkwayBridgeRequest(
+            id: "GET-PHOTO-ID",
+            kind: .journalGet,
+            journalID: "ENTRY-ID",
+            includePhotoAttachments: true
+        )
+        try JSONEncoder.markway.encode(getRequest).write(
+            to: bridge.requestsURL.appendingPathComponent("GET-PHOTO-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.entry?.photoAttachments.first?.id, "PHOTO-ID")
+        XCTAssertEqual(responses.first?.entry?.photoAttachments.first?.files.first?.relativePath, "ENTRY-ID/PHOTO-ID/photo.heic")
+        XCTAssertEqual(responses.first?.entry?.photoAttachments.first?.files.first?.byteLength, 1234)
+        XCTAssertEqual(backend.photoCalls, ["ENTRY-ID"])
+        XCTAssertEqual(backend.musicCalls, [], "music should not be fetched unless requested")
+    }
+
+    func testPushUsesProvidedBodyInsteadOfFileContents() throws {
+        let vault = try temporaryDirectory()
+        let fileURL = vault.appendingPathComponent("Entry.md")
+        try """
+        %% photos %%
+        ![[Testing - 1.jpg]]
+
+        %% content %%
+        bugis
+        """.write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "PUSH-BODY-ID",
+            kind: .journalPush,
+            relativePath: "Entry.md",
+            journalID: "ENTRY-ID",
+            title: "Entry",
+            body: "bugis"
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("PUSH-BODY-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(backend.updateCalls.count, 1)
+        let pushedBody = try String(contentsOf: backend.updateCalls[0].bodyFile, encoding: .utf8)
+        XCTAssertEqual(pushedBody, "bugis", "the bridge must push the plugin-extracted journal text, not the raw file")
+    }
+
+    func testIncludesGenericAttachmentsOnRequest() throws {
+        let vault = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.attachmentResults = [
+            JournalGenericAttachment(
+                id: "REFLECTION-ID",
+                assetType: "reflection",
+                source: "suggestionSheet",
+                metadata: .object(["prompt": .string("Who is your wisest friend?")])
+            )
+        ]
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "GET-GENERIC-ID",
+            kind: .journalGet,
+            journalID: "ENTRY-ID",
+            includeAttachments: true
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("GET-GENERIC-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.entry?.attachments.count, 1)
+        XCTAssertEqual(responses.first?.entry?.attachments.first?.assetType, "reflection")
+        XCTAssertEqual(backend.attachmentCalls, ["ENTRY-ID"])
+        XCTAssertEqual(backend.photoCalls, [], "photos should not be fetched unless requested")
+    }
+
+    func testExportConvertsImagesWhenExtensionsDiffer() throws {
+        let vault = try temporaryDirectory()
+        let store = try temporaryDirectory()
+        let sourceURL = store.appendingPathComponent("photo.png")
+        // 1x1 red pixel PNG.
+        let pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        try Data(base64Encoded: pngBase64)!.write(to: sourceURL)
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.photoResults = [
+            JournalPhotoAttachment(
+                id: "PHOTO-ID",
+                files: [
+                    JournalAttachmentFile(
+                        id: "FILE-ID",
+                        name: "image",
+                        relativePath: "ENTRY-ID/PHOTO-ID/photo.png",
+                        absolutePath: sourceURL.path,
+                        exists: true
+                    )
+                ]
+            )
+        ]
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "EXPORT-CONVERT-ID",
+            kind: .journalExportAttachment,
+            relativePath: "Attachments/My Trip - 1.jpg",
+            journalID: "ENTRY-ID",
+            assetID: "PHOTO-ID"
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("EXPORT-CONVERT-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+        let exported = try Data(contentsOf: vault.appendingPathComponent("Attachments/My Trip - 1.jpg"))
+
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(exported.prefix(2), Data([0xFF, 0xD8]), "converted file should be JPEG")
+    }
+
+    func testExportsJournalPhotoFileIntoVault() throws {
+        let vault = try temporaryDirectory()
+        let store = try temporaryDirectory()
+        let sourceURL = store.appendingPathComponent("photo.heic")
+        try Data("photo-bytes".utf8).write(to: sourceURL)
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        backend.photoResults = [
+            JournalPhotoAttachment(
+                id: "PHOTO-ID",
+                files: [
+                    JournalAttachmentFile(
+                        id: "FILE-ID",
+                        name: "image",
+                        relativePath: "ENTRY-ID/PHOTO-ID/photo.heic",
+                        absolutePath: sourceURL.path,
+                        exists: true
+                    )
+                ]
+            )
+        ]
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "EXPORT-ID",
+            kind: .journalExportAttachment,
+            relativePath: "Attachments/My Trip - 1.heic",
+            journalID: "ENTRY-ID",
+            assetID: "PHOTO-ID"
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("EXPORT-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+        let exportedURL = vault.appendingPathComponent("Attachments/My Trip - 1.heic")
+
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(try String(contentsOf: exportedURL, encoding: .utf8), "photo-bytes")
+        XCTAssertEqual(backend.photoCalls, ["ENTRY-ID"])
+    }
+
+    func testExportFailsForUnknownPhotoAsset() throws {
+        let vault = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "EXPORT-MISSING-ID",
+            kind: .journalExportAttachment,
+            relativePath: "Attachments/Missing.heic",
+            journalID: "ENTRY-ID",
+            assetID: "MISSING-ASSET"
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("EXPORT-MISSING-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.ok, false)
+        XCTAssertEqual(
+            FileManager.default.fileExists(atPath: vault.appendingPathComponent("Attachments/Missing.heic").path),
+            false
+        )
+    }
+
+    func testAddsVaultImageAndVideoAttachments() throws {
+        let vault = try temporaryDirectory()
+        try Data("png-bytes".utf8).write(to: vault.appendingPathComponent("Sunset.png"))
+        try Data("mov-bytes".utf8).write(to: vault.appendingPathComponent("Clip.mov"))
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        for (id, path) in [("ADD-IMAGE-ID", "Sunset.png"), ("ADD-VIDEO-ID", "Clip.mov")] {
+            let request = MarkwayBridgeRequest(
+                id: id,
+                kind: .journalAddAttachment,
+                relativePath: path,
+                journalID: "ENTRY-ID"
+            )
+            try JSONEncoder.markway.encode(request).write(
+                to: bridge.requestsURL.appendingPathComponent("\(id).json"),
+                options: .atomic
+            )
+        }
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.map(\.ok), [true, true])
+        XCTAssertEqual(backend.rawCalls, [
+            ["attachments", "add-photo", "ENTRY-ID", vault.appendingPathComponent("Sunset.png").resolvingSymlinksInPath().path],
+            ["attachments", "add-video", "ENTRY-ID", vault.appendingPathComponent("Clip.mov").resolvingSymlinksInPath().path],
+        ])
+    }
+
+    func testRejectsUnsupportedAttachmentTypes() throws {
+        let vault = try temporaryDirectory()
+        try Data("text".utf8).write(to: vault.appendingPathComponent("Notes.txt"))
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "ADD-TEXT-ID",
+            kind: .journalAddAttachment,
+            relativePath: "Notes.txt",
+            journalID: "ENTRY-ID"
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("ADD-TEXT-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.ok, false)
+        XCTAssertEqual(backend.rawCalls, [])
+    }
+
+    func testRejectsAttachmentRequestsOutsideVault() throws {
+        let vault = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "ADD-ESCAPE-ID",
+            kind: .journalAddAttachment,
+            relativePath: "../outside.png",
+            journalID: "ENTRY-ID"
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("ADD-ESCAPE-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.ok, false)
+        XCTAssertEqual(backend.rawCalls, [])
+    }
+
     func testProcessesJournalPullRequestThroughBackend() throws {
         let temp = try temporaryDirectory()
         let note = temp.appendingPathComponent("Pulled.md")

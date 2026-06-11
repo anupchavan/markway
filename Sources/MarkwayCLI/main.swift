@@ -737,6 +737,8 @@ struct NoopJournalBackend: JournalBackend {
     func deleteAttachment(entryID: String, assetID: String) throws {}
     func get(id: String) throws -> JournalEntryText { JournalEntryText(id: id, title: "", body: "") }
     func musicAttachments(id: String) throws -> [JournalMusicAttachment] { [] }
+    func photoAttachments(id: String) throws -> [JournalPhotoAttachment] { [] }
+    func attachments(id: String) throws -> [JournalGenericAttachment] { [] }
     func runRaw(_ arguments: [String]) throws -> String { "" }
 }
 

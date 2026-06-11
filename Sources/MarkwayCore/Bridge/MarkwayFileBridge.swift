@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import ImageIO
 
 public enum MarkwayBridgeKind: String, Codable, Sendable {
     case doctor
@@ -9,6 +10,8 @@ public enum MarkwayBridgeKind: String, Codable, Sendable {
     case journalPull
     case journalDelete
     case journalDeleteAttachment
+    case journalExportAttachment
+    case journalAddAttachment
 }
 
 public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
@@ -19,7 +22,10 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
     public var journalID: String?
     public var assetID: String?
     public var title: String?
+    public var body: String?
     public var includeMusicAttachments: Bool?
+    public var includePhotoAttachments: Bool?
+    public var includeAttachments: Bool?
     public var stripTitleHeading: Bool?
     public var requestedAt: String
 
@@ -31,7 +37,10 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         journalID: String? = nil,
         assetID: String? = nil,
         title: String? = nil,
+        body: String? = nil,
         includeMusicAttachments: Bool? = nil,
+        includePhotoAttachments: Bool? = nil,
+        includeAttachments: Bool? = nil,
         stripTitleHeading: Bool? = nil,
         requestedAt: String = ISO8601DateFormatter().string(from: Date())
     ) {
@@ -42,7 +51,10 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         self.journalID = journalID
         self.assetID = assetID
         self.title = title
+        self.body = body
         self.includeMusicAttachments = includeMusicAttachments
+        self.includePhotoAttachments = includePhotoAttachments
+        self.includeAttachments = includeAttachments
         self.stripTitleHeading = stripTitleHeading
         self.requestedAt = requestedAt
     }
@@ -112,6 +124,14 @@ public struct MarkwayBridgeEvent: Codable, Equatable, Sendable {
         self.createdAt = createdAt
     }
 }
+
+let imageAttachmentExtensions: Set<String> = [
+    "jpg", "jpeg", "png", "heic", "heif", "gif", "webp", "bmp", "tif", "tiff",
+]
+
+let videoAttachmentExtensions: Set<String> = [
+    "mov", "mp4", "m4v",
+]
 
 public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
     public let vaultURL: URL
@@ -216,6 +236,12 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
             if request.includeMusicAttachments == true {
                 entry.musicAttachments = try journal.musicAttachments(id: journalID)
             }
+            if request.includePhotoAttachments == true {
+                entry.photoAttachments = try journal.photoAttachments(id: journalID)
+            }
+            if request.includeAttachments == true {
+                entry.attachments = try journal.attachments(id: journalID)
+            }
             return MarkwayBridgeResponse(
                 id: request.id,
                 ok: true,
@@ -233,7 +259,8 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
                 title: request.title,
                 existingID: request.journalID,
                 writeMetadata: false,
-                stripTitleHeading: request.stripTitleHeading == true
+                stripTitleHeading: request.stripTitleHeading == true,
+                bodyOverride: request.body
             )
             return MarkwayBridgeResponse(
                 id: request.id,
@@ -285,7 +312,110 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
                 message: "Deleted Journal attachment",
                 journalID: journalID
             )
+
+        case .journalExportAttachment:
+            guard let journalID = request.journalID, !journalID.isEmpty else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "journalExportAttachment requires journalID")
+            }
+            guard let assetID = request.assetID, !assetID.isEmpty else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "journalExportAttachment requires assetID")
+            }
+            let destinationURL = try fileURL(for: request, kind: "journalExportAttachment")
+
+            let photos = try journal.photoAttachments(id: journalID)
+            guard let photo = photos.first(where: { $0.id == assetID }) else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "Journal photo \(assetID) was not found")
+            }
+            let file = photo.files.first(where: { $0.name == "image" }) ?? photo.files.first
+            guard let file, !file.absolutePath.isEmpty else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "Journal photo \(assetID) has no image file")
+            }
+            let sourceURL = URL(fileURLWithPath: file.absolutePath)
+            guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "Journal photo file is missing: \(file.absolutePath)")
+            }
+
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            if destinationURL.pathExtension.lowercased() == sourceURL.pathExtension.lowercased() {
+                try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
+            } else if let conversionError = Self.convertImage(at: sourceURL, to: destinationURL) {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: conversionError)
+            }
+            return MarkwayBridgeResponse(
+                id: request.id,
+                ok: true,
+                message: "Exported Journal photo",
+                journalID: journalID
+            )
+
+        case .journalAddAttachment:
+            guard let journalID = request.journalID, !journalID.isEmpty else {
+                return MarkwayBridgeResponse(id: request.id, ok: false, message: "journalAddAttachment requires journalID")
+            }
+            return try addAttachment(request, journalID: journalID)
         }
+    }
+
+    /// Re-encodes a Journal image into the requested destination format.
+    /// Obsidian cannot display HEIC, so exports ask for a displayable format
+    /// (currently JPEG) whenever the source format is not displayable.
+    static func convertImage(at sourceURL: URL, to destinationURL: URL) -> String? {
+        let destinationType: CFString
+        switch destinationURL.pathExtension.lowercased() {
+        case "jpg", "jpeg":
+            destinationType = "public.jpeg" as CFString
+        case "png":
+            destinationType = "public.png" as CFString
+        default:
+            return "Markway cannot convert images to .\(destinationURL.pathExtension.lowercased())"
+        }
+
+        guard let source = CGImageSourceCreateWithURL(sourceURL as CFURL, nil),
+              CGImageSourceGetCount(source) > 0 else {
+            return "Markway could not read the Journal image at \(sourceURL.path)"
+        }
+        guard let destination = CGImageDestinationCreateWithURL(destinationURL as CFURL, destinationType, 1, nil) else {
+            return "Markway could not create \(destinationURL.lastPathComponent)"
+        }
+
+        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: 0.9]
+        CGImageDestinationAddImageFromSource(destination, source, 0, options as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            return "Markway could not convert \(sourceURL.lastPathComponent) to \(destinationURL.pathExtension)"
+        }
+        return nil
+    }
+
+    private func addAttachment(_ request: MarkwayBridgeRequest, journalID: String) throws -> MarkwayBridgeResponse {
+        let sourceURL = try fileURL(for: request, kind: "journalAddAttachment")
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            return MarkwayBridgeResponse(id: request.id, ok: false, message: "Attachment file does not exist: \(sourceURL.path)")
+        }
+
+        let fileExtension = sourceURL.pathExtension.lowercased()
+        if imageAttachmentExtensions.contains(fileExtension) {
+            _ = try journal.runRaw(["attachments", "add-photo", journalID, sourceURL.path])
+        } else if videoAttachmentExtensions.contains(fileExtension) {
+            _ = try journal.runRaw(["attachments", "add-video", journalID, sourceURL.path])
+        } else {
+            return MarkwayBridgeResponse(
+                id: request.id,
+                ok: false,
+                message: "Unsupported attachment type .\(fileExtension); expected an image or video"
+            )
+        }
+        return MarkwayBridgeResponse(
+            id: request.id,
+            ok: true,
+            message: "Added Journal attachment",
+            journalID: journalID
+        )
     }
 
     private func writeResponse(_ response: MarkwayBridgeResponse) throws {

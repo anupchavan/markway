@@ -39,14 +39,19 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
         title explicitTitle: String? = nil,
         existingID explicitExistingID: String? = nil,
         writeMetadata: Bool = true,
-        stripTitleHeading: Bool = false
+        stripTitleHeading: Bool = false,
+        bodyOverride: String? = nil
     ) throws -> String {
         var document = try MarkdownDocument.read(from: fileURL)
         let title = explicitTitle
             ?? document[MarkwayMetadataKey.title]
             ?? fileURL.deletingPathExtension().lastPathComponent
 
-        let body = stripTitleHeading ? Self.stripGeneratedTitleHeading(from: document.body, title: title) : document.body
+        // The Obsidian plugin separates the journal text from generated
+        // template sections and sends only the journal text; pushing the raw
+        // file would copy template output into the Journal entry.
+        let rawBody = bodyOverride ?? document.body
+        let body = stripTitleHeading ? Self.stripGeneratedTitleHeading(from: rawBody, title: title) : rawBody
         let bodyURL = try writeTemporaryBody(body)
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 

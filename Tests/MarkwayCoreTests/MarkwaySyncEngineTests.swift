@@ -266,6 +266,10 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
     var listResults: [JournalEntrySummary] = []
     var musicResults: [JournalMusicAttachment] = []
     var musicCalls: [String] = []
+    var photoResults: [JournalPhotoAttachment] = []
+    var photoCalls: [String] = []
+    var attachmentResults: [JournalGenericAttachment] = []
+    var attachmentCalls: [String] = []
     var getResults: [String: JournalEntryText] = [:]
     let nextID: String
 
@@ -306,6 +310,16 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
     func musicAttachments(id: String) throws -> [JournalMusicAttachment] {
         musicCalls.append(id)
         return musicResults
+    }
+
+    func photoAttachments(id: String) throws -> [JournalPhotoAttachment] {
+        photoCalls.append(id)
+        return photoResults
+    }
+
+    func attachments(id: String) throws -> [JournalGenericAttachment] {
+        attachmentCalls.append(id)
+        return attachmentResults
     }
 
     func runRaw(_ arguments: [String]) throws -> String {
