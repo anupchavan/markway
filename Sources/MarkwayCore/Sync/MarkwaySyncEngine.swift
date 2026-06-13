@@ -57,10 +57,19 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
         defer { try? FileManager.default.removeItem(at: bodyURL) }
 
         let id: String
-        let existingID = explicitExistingID ?? document[MarkwayMetadataKey.appleJournalID]
-        if let existingID, !existingID.isEmpty {
-            try journal.update(id: existingID, title: title, bodyFile: bodyURL)
-            id = existingID
+        let existingID = Self.normalizedJournalID(explicitExistingID)
+            ?? Self.normalizedJournalID(document[MarkwayMetadataKey.appleJournalID])
+        if let existingID {
+            do {
+                try journal.update(id: existingID, title: title, bodyFile: bodyURL)
+                id = existingID
+            } catch {
+                guard Self.shouldCreateEntryAfterUpdateFailure(error) else {
+                    throw error
+                }
+                id = try journal.add(title: title, bodyFile: bodyURL)
+                document[MarkwayMetadataKey.appleJournalID] = id
+            }
         } else {
             id = try journal.add(title: title, bodyFile: bodyURL)
             document[MarkwayMetadataKey.appleJournalID] = id
@@ -153,6 +162,18 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
 
     private var excludedDirectoryNames: Set<String> {
         [".git", ".markway", ".obsidian", "node_modules"]
+    }
+
+    private static func normalizedJournalID(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func shouldCreateEntryAfterUpdateFailure(_ error: Error) -> Bool {
+        let message = String(describing: error).lowercased()
+        return message.contains("update requires uuid")
+            || message.contains("invalid uuid")
+            || message.contains("entry not found")
     }
 
     static func stripGeneratedTitleHeading(from body: String, title: String) -> String {

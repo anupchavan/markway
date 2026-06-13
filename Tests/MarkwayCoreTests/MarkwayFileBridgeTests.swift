@@ -73,6 +73,40 @@ final class MarkwayFileBridgeTests: XCTestCase {
         XCTAssertFalse(bridge.bridgeURL.path.hasPrefix(temp.appendingPathComponent(".markway").path))
     }
 
+    func testJournalPushWithBlankJournalIDCreatesEntry() throws {
+        let temp = try temporaryDirectory()
+        let note = temp.appendingPathComponent("Entry.md")
+        try "Bridge body".write(to: note, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "NEW-ID")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "REQUEST-ID",
+            kind: .journalPush,
+            relativePath: "Entry.md",
+            journalID: " \n\t "
+        )
+        let requestData = try JSONEncoder.markway.encode(request)
+        try requestData.write(
+            to: bridge.requestsURL.appendingPathComponent("REQUEST-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(responses.first?.journalID, "NEW-ID")
+        XCTAssertEqual(backend.addCalls.count, 1)
+        XCTAssertEqual(backend.updateCalls.count, 0)
+    }
+
     func testProcessesDoctorRequestThroughBackend() throws {
         let temp = try temporaryDirectory()
         let backend = RecordingJournalBackend(nextID: "UNUSED")

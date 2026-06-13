@@ -60,6 +60,50 @@ final class MarkwaySyncEngineTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: backend.updateCalls.first!.bodyFile), "Updated body")
     }
 
+    func testPushCreatesJournalEntryWhenExplicitIDIsBlank() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try "Body".write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "NEW-ID")
+        let engine = MarkwaySyncEngine(journal: backend)
+        let id = try engine.pushMarkdownFile(file, title: "Entry", existingID: " \n\t ")
+
+        XCTAssertEqual(id, "NEW-ID")
+        XCTAssertEqual(backend.addCalls.count, 1)
+        XCTAssertEqual(backend.updateCalls.count, 0)
+    }
+
+    func testPushCreatesJournalEntryWhenExistingIDIsMissingInJournal() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try "Body".write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "NEW-ID")
+        backend.updateError = JournalTextToolError.failed(status: 64, stdout: "", stderr: "entry not found: STALE-ID")
+        let engine = MarkwaySyncEngine(journal: backend)
+        let id = try engine.pushMarkdownFile(file, title: "Entry", existingID: "STALE-ID")
+
+        XCTAssertEqual(id, "NEW-ID")
+        XCTAssertEqual(backend.updateCalls.count, 1)
+        XCTAssertEqual(backend.updateCalls.first?.id, "STALE-ID")
+        XCTAssertEqual(backend.addCalls.count, 1)
+    }
+
+    func testPushDoesNotCreateJournalEntryForUnrelatedUpdateFailure() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try "Body".write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "NEW-ID")
+        backend.updateError = CocoaError(.fileWriteNoPermission)
+        let engine = MarkwaySyncEngine(journal: backend)
+
+        XCTAssertThrowsError(try engine.pushMarkdownFile(file, title: "Entry", existingID: "EXISTING-ID"))
+        XCTAssertEqual(backend.updateCalls.count, 1)
+        XCTAssertEqual(backend.addCalls.count, 0)
+    }
+
     func testPushCanLeaveFrontmatterForCallerToWrite() throws {
         let temp = try temporaryDirectory()
         let file = temp.appendingPathComponent("Entry.md")
@@ -271,6 +315,7 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
     var attachmentResults: [JournalGenericAttachment] = []
     var attachmentCalls: [String] = []
     var getResults: [String: JournalEntryText] = [:]
+    var updateError: Error?
     let nextID: String
 
     init(nextID: String) {
@@ -286,6 +331,9 @@ final class RecordingJournalBackend: JournalBackend, @unchecked Sendable {
     func update(id: String, title: String, bodyFile: URL) throws {
         let copied = try copyBodyFile(bodyFile)
         updateCalls.append(UpdateCall(id: id, title: title, bodyFile: copied))
+        if let updateError {
+            throw updateError
+        }
     }
 
     func delete(id: String) throws {
