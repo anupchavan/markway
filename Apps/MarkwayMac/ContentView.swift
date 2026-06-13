@@ -11,6 +11,8 @@ struct ContentView: View {
     @State private var logText = MarkwayLogReader.journalLogTail()
     @State private var isConfiguring = false
     @State private var journalAccess: JournalAccessState = .checking
+    @State private var lastConfiguredVaultPath = UserDefaults.standard.string(forKey: "vaultPath") ?? ""
+    @State private var pendingVaultPathConfiguration: Task<Void, Never>?
 
     var body: some View {
         NavigationSplitView {
@@ -39,6 +41,9 @@ struct ContentView: View {
             if newValue == .journal {
                 refreshLogs()
             }
+        }
+        .onChange(of: vaultPath) { _, newValue in
+            scheduleVaultPathConfiguration(for: newValue)
         }
         .onAppear {
             installCommandLineTool()
@@ -95,10 +100,7 @@ struct ContentView: View {
 
     private var vaultURL: URL? {
         let path = vaultPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else {
-            return nil
-        }
-        return URL(fileURLWithPath: (path as NSString).expandingTildeInPath).standardizedFileURL
+        return MarkwayVaultPath.url(from: path)
     }
 
     private func refreshLogs() {
@@ -113,6 +115,9 @@ struct ContentView: View {
     }
 
     private func configureFromCurrentVaultPath() {
+        pendingVaultPathConfiguration?.cancel()
+        pendingVaultPathConfiguration = nil
+
         guard let vaultURL else {
             status = "Choose your Markdown vault to enable background sync."
             detail = ""
@@ -145,6 +150,7 @@ struct ContentView: View {
                 switch result {
                 case .success:
                     journalAccess = .granted
+                    lastConfiguredVaultPath = vaultURL.path
                     vaultPath = vaultURL.path
                     status = "Background sync is ready."
                     detail = ""
@@ -187,6 +193,9 @@ struct ContentView: View {
     }
 
     private func chooseVault() {
+        pendingVaultPathConfiguration?.cancel()
+        pendingVaultPathConfiguration = nil
+
         let panel = NSOpenPanel()
         panel.title = "Choose Markdown vault"
         panel.prompt = "Choose"
@@ -202,15 +211,34 @@ struct ContentView: View {
         vaultPath = url.standardizedFileURL.path
         configureFromCurrentVaultPath()
     }
+
+    private func scheduleVaultPathConfiguration(for rawPath: String) {
+        pendingVaultPathConfiguration?.cancel()
+
+        guard let url = MarkwayVaultPath.url(from: rawPath),
+              MarkwayVaultPath.isObsidianVault(url),
+              url.path != lastConfiguredVaultPath else {
+            pendingVaultPathConfiguration = nil
+            return
+        }
+
+        pendingVaultPathConfiguration = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            guard !Task.isCancelled,
+                  MarkwayVaultPath.url(from: vaultPath)?.path == url.path,
+                  !isConfiguring else {
+                return
+            }
+            configureFromCurrentVaultPath()
+        }
+    }
 }
 
 private func validateVault(_ url: URL) throws {
-    var isDirectory = ObjCBool(false)
-    guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-          isDirectory.boolValue else {
+    guard MarkwayVaultPath.isDirectory(url) else {
         throw CocoaError(.fileNoSuchFile)
     }
-    guard FileManager.default.directoryExists(at: url.appendingPathComponent(".obsidian", isDirectory: true)) else {
+    guard MarkwayVaultPath.isObsidianVault(url) else {
         throw ValidationError("That folder is not an Obsidian vault.")
     }
 }
