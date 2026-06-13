@@ -311,6 +311,40 @@ final class MarkwayFileBridgeTests: XCTestCase {
         XCTAssertEqual(pushedBody, "bugis", "the bridge must push the plugin-extracted journal text, not the raw file")
     }
 
+    func testJournalPushCanUpdateCreatedDate() throws {
+        let vault = try temporaryDirectory()
+        let fileURL = vault.appendingPathComponent("Entry.md")
+        try "Bridge body".write(to: fileURL, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: vault,
+            journal: backend,
+            bridgeBaseURL: vault.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "PUSH-CREATED-ID",
+            kind: .journalPush,
+            relativePath: "Entry.md",
+            journalID: "ENTRY-ID",
+            title: "Entry",
+            body: "Bridge body",
+            created: "2026-06-05T01:02:03Z"
+        )
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("PUSH-CREATED-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.first?.ok, true)
+        XCTAssertEqual(backend.updateCalls.first?.id, "ENTRY-ID")
+        XCTAssertEqual(backend.rawCalls, [["update", "ENTRY-ID", "--created", "2026-06-05T01:02:03Z"]])
+    }
+
     func testIncludesGenericAttachmentsOnRequest() throws {
         let vault = try temporaryDirectory()
         let backend = RecordingJournalBackend(nextID: "UNUSED")

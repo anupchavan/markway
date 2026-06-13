@@ -142,10 +142,13 @@ public struct JournalTextTool: JournalBackend {
         }
     }
 
+    static let visualAssetTypes: Set<String> = ["photo", "video", "livePhoto"]
+
     static func parsePhotoAttachments(fromJSON output: String) throws -> [JournalPhotoAttachment] {
         let payload = try JSONDecoder().decode(JournalAttachmentListPayload.self, from: Data(output.utf8))
         return payload.attachments.compactMap { attachment in
-            guard attachment.assetType == "photo",
+            guard let assetType = attachment.assetType,
+                  Self.visualAssetTypes.contains(assetType),
                   attachment.isFullyRemoved != true,
                   attachment.isUndoablyDeleted != true else {
                 return nil
@@ -167,6 +170,7 @@ public struct JournalTextTool: JournalBackend {
                 }
             return JournalPhotoAttachment(
                 id: attachment.id,
+                assetType: assetType,
                 source: attachment.source ?? "",
                 isHidden: attachment.isHidden ?? false,
                 isSlim: attachment.isSlim ?? false,
@@ -253,12 +257,18 @@ public struct JournalTextTool: JournalBackend {
             }
         }
 
-        if assetType == "multiPinMap", let visits = result["visitsData"] as? [[String: Any]] {
-            result["visitsData"] = visits.map { visit -> [String: Any] in
-                // The archived MKMapItem blob is large and opaque; drop it.
-                var cleaned = visit
-                cleaned.removeValue(forKey: "mapItemData")
-                return cleaned
+        if assetType == "multiPinMap" || assetType == "genericMap" {
+            // genericMap stores a single visit object; multiPinMap stores an
+            // array. The archived MKMapItem blob is large and opaque; drop it.
+            if let visits = result["visitsData"] as? [[String: Any]] {
+                result["visitsData"] = visits.map { visit -> [String: Any] in
+                    var cleaned = visit
+                    cleaned.removeValue(forKey: "mapItemData")
+                    return cleaned
+                }
+            } else if var visit = result["visitsData"] as? [String: Any] {
+                visit.removeValue(forKey: "mapItemData")
+                result["visitsData"] = visit
             }
         }
 

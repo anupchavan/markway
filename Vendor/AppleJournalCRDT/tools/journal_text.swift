@@ -118,6 +118,17 @@ func jsShimMergeableEntryAssetsPlacementMetadata() -> UnsafeRawPointer
 @_silgen_name("js_call_mergeable_entry_assets_placement_from_legacy")
 func jsShimMergeableEntryAssetsPlacementFromLegacy(_ entry: NSManagedObject, _ valueAddress: UnsafeMutableRawPointer)
 
+@_silgen_name("js_call_mergeable_entry_assets_placement_debug_description")
+func jsShimMergeableEntryAssetsPlacementDebugDescription(_ placementAddress: UnsafeMutableRawPointer) -> String
+
+@_silgen_name("js_call_mergeable_entry_assets_placement_add_asset")
+func jsShimMergeableEntryAssetsPlacementAddAsset(
+    _ placementAddress: UnsafeMutableRawPointer,
+    _ assetID: UUID,
+    _ placementKind: Int,
+    _ gridIndex: Int
+)
+
 @_silgen_name("js_call_mergeable_entry_merge_asset_placement")
 func jsShimMergeAssetPlacement(_ placementAddress: UnsafeMutableRawPointer, _ entryAddress: UnsafeMutableRawPointer)
 
@@ -155,6 +166,7 @@ struct Options {
     var operands: [String] = []
     var title: String?
     var bodyPath: String?
+    var created: String?
     var outputPath: String?
     var hardDelete = false
     var keepFiles = false
@@ -179,13 +191,14 @@ func usage() -> String {
     usage:
       journal_text list [--store PATH]
       journal_text get UUID [--store PATH]
-      journal_text add --title TITLE --body BODY.md [--store PATH]
-      journal_text update UUID [--title TITLE] [--body BODY.md] [--store PATH]
+      journal_text add --title TITLE --body BODY.md [--created ISO8601] [--store PATH]
+      journal_text update UUID [--title TITLE] [--body BODY.md] [--created ISO8601] [--store PATH]
       journal_text delete UUID [--hard] [--store PATH]
       journal_text purge UUID [--store PATH]
       journal_text sync-status [UUID] [--store PATH]
       journal_text queue-upload UUID [--store PATH]
       journal_text debug-attrs UUID [--store PATH]
+      journal_text debug-placement UUID [--store PATH]
       journal_text debug-markdown --body BODY.md
       journal_text attachments types [--store PATH]
       journal_text attachments list UUID [--store PATH] [--attachment-root PATH] [--json]
@@ -226,6 +239,10 @@ func parseOptions() throws -> Options {
         case "--body":
             guard let value = args.first else { throw ToolError.usage("--body requires a markdown file path") }
             options.bodyPath = value
+            args.removeFirst()
+        case "--created":
+            guard let value = args.first else { throw ToolError.usage("--created requires an ISO8601 date") }
+            options.created = value
             args.removeFirst()
         case "--out":
             guard let value = args.first else { throw ToolError.usage("--out requires a directory path") }
@@ -658,6 +675,43 @@ func preservedAssetPlacement(from wrapper: NSObject?) -> SwiftValueBuffer? {
     }
     placement.markInitialized()
     return placement
+}
+
+func assetPlacementDebugDescription(from wrapper: NSObject?) -> String? {
+    guard let placement = preservedAssetPlacement(from: wrapper) else {
+        return nil
+    }
+    defer { placement.destroy() }
+    return jsShimMergeableEntryAssetsPlacementDebugDescription(placement.pointer)
+}
+
+func makeMergeableAttributes(from wrapper: NSObject, replacingAssetPlacement assetPlacement: SwiftValueBuffer) throws -> NSObject {
+    let metadata = jsMergeableEntryAttributesMetadata(0)
+    var oldValue = MergeableEntryAttributesOpaque()
+    var newValue = try jsMergeableEntryAttributesDefaultState(metadata)
+    let crTitle = SwiftValueBuffer(metadata: jsShimCRTitleMetadata())
+    let crText = SwiftValueBuffer(metadata: jsShimCRTextMetadata())
+
+    withUnsafeMutableBytes(of: &oldValue) { raw in
+        jsShimWrappedMergeableEntryAttributesValue(wrapper, raw.baseAddress!)
+        jsShimMergeableEntryTitleGetter(raw.baseAddress!, crTitle.pointer)
+        jsShimMergeableEntryTextGetter(raw.baseAddress!, crText.pointer)
+    }
+    crTitle.markInitialized()
+    crText.markInitialized()
+
+    withUnsafeMutableBytes(of: &newValue) { raw in
+        jsShimMergeTitle(crTitle.pointer, raw.baseAddress!)
+        jsShimMergeText(crText.pointer, raw.baseAddress!)
+        jsShimMergeAssetPlacement(assetPlacement.pointer, raw.baseAddress!)
+    }
+    crTitle.destroy()
+    crText.destroy()
+
+    let wrapperMetadata = jsWrappedMergeableEntryAttributesMetadata(0)
+    return withUnsafeMutableBytes(of: &newValue) { raw in
+        jsShimWrapMergeableEntryAttributes(raw.baseAddress!, wrapperMetadata)
+    }
 }
 
 func makeMergeableAttributes(title: NSAttributedString, text: NSAttributedString, preservingAssetPlacementFrom wrapper: NSObject? = nil) throws -> NSObject {
@@ -1384,6 +1438,45 @@ func dateString(_ value: Any?) -> String? {
     (value as? Date)?.ISO8601Format()
 }
 
+func parseInputDate(_ value: String) throws -> Date {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    for options: ISO8601DateFormatter.Options in [
+        [.withInternetDateTime, .withFractionalSeconds],
+        [.withInternetDateTime],
+        [.withFullDate],
+    ] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = options
+        if let date = formatter.date(from: trimmed) {
+            return date
+        }
+    }
+
+    let dayFormatter = DateFormatter()
+    dayFormatter.calendar = Calendar(identifier: .gregorian)
+    dayFormatter.locale = Locale(identifier: "en_US_POSIX")
+    dayFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+    dayFormatter.dateFormat = "yyyy-MM-dd"
+    if let date = dayFormatter.date(from: trimmed) {
+        return date
+    }
+
+    throw ToolError.invalid("invalid --created date: \(value)")
+}
+
+func applyCreatedDate(_ entry: NSManagedObject, created: String?, now: Date) throws {
+    guard let created, !created.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return
+    }
+    let createdDate = try parseInputDate(created)
+    entry.setValue(createdDate, forKey: "createdDate")
+    entry.setValue(createdDate, forKey: "entryDate")
+    entry.setValue(createdDate, forKey: "momentDateForSorting")
+    entry.setValue(now, forKey: "updatedDate")
+    entry.setValue(now, forKey: "entryDataUpdateDate")
+    entry.setValue(false, forKey: "isUploadedToCloud")
+}
+
 func decodeAssetOrdering(_ data: Data?) -> [UUID: Int] {
     guard let data,
           let array = try? JSONSerialization.jsonObject(with: data) as? [Any] else {
@@ -1743,6 +1836,33 @@ func currentOrderedAssetIDs(entry: NSManagedObject) -> [UUID] {
     sortedAttachmentAssets(entry: entry).compactMap { uuidValue($0, key: "id") }
 }
 
+func isLocationOnlyMapAsset(_ asset: NSManagedObject) -> Bool {
+    let assetType = stringValue(asset, key: "assetType") ?? ""
+    guard assetType == "multiPinMap" || assetType == "genericMap" else {
+        return false
+    }
+    guard let metadata = decodedVersionedJSON(dataValue(asset, key: "assetMetaData")) as? [String: Any] else {
+        return false
+    }
+    return metadata["visitsData"] != nil
+        && metadata["mapCameraData"] == nil
+        && metadata["revision"] == nil
+}
+
+func orderedAssetIDsAfterAppendingVisibleAttachment(entry: NSManagedObject, assetID: UUID) -> [UUID] {
+    var visibleIDs: [UUID] = []
+    var locationOnlyMapIDs: [UUID] = []
+    for asset in sortedAttachmentAssets(entry: entry) {
+        guard let id = uuidValue(asset, key: "id") else { continue }
+        if isLocationOnlyMapAsset(asset) {
+            locationOnlyMapIDs.append(id)
+        } else {
+            visibleIDs.append(id)
+        }
+    }
+    return visibleIDs + [assetID] + locationOnlyMapIDs
+}
+
 func validateReorderIDs(entry: NSManagedObject, requestedIDs: [UUID]) throws {
     let assets = sortedAttachmentAssets(entry: entry)
     let currentIDs = assets.compactMap { uuidValue($0, key: "id") }
@@ -1793,6 +1913,34 @@ func refreshMergeableAssetPlacementFromLegacy(entry: NSManagedObject) throws {
     let updatedWrapper = withUnsafeMutableBytes(of: &value) { raw in
         jsShimWrapMergeableEntryAttributes(raw.baseAddress!, wrapperMetadata)
     }
+    entry.setValue(updatedWrapper, forKey: "mergeableAttributes")
+}
+
+func replaceMergeableAssetPlacementByAddingAsset(
+    entry: NSManagedObject,
+    assetID: UUID,
+    placement: String,
+    gridIndex: Int
+) throws {
+    guard let wrapper = entry.value(forKey: "mergeableAttributes") as? NSObject,
+          let assetPlacement = preservedAssetPlacement(from: wrapper) else {
+        try refreshMergeableAssetPlacementFromLegacy(entry: entry)
+        return
+    }
+    defer { assetPlacement.destroy() }
+
+    let placementKind: Int
+    switch placement {
+    case "grid":
+        placementKind = 0
+    case "slim":
+        placementKind = 1
+    default:
+        throw ToolError.usage("attachment placement must be grid or slim")
+    }
+
+    jsShimMergeableEntryAssetsPlacementAddAsset(assetPlacement.pointer, assetID, placementKind, gridIndex)
+    let updatedWrapper = try makeMergeableAttributes(from: wrapper, replacingAssetPlacement: assetPlacement)
     entry.setValue(updatedWrapper, forKey: "mergeableAttributes")
 }
 
@@ -2009,7 +2157,7 @@ func addPhotoAttachment(entry: NSManagedObject, imagePath: String, rootPath: Str
     let now = Date()
     let written = try writeJPEGImageAttachment(imagePath: imagePath, entryID: entryID, assetID: assetID, rootPath: rootPath)
 
-    let currentIDs = currentOrderedAssetIDs(entry: entry)
+    let orderedIDs = orderedAssetIDsAfterAppendingVisibleAttachment(entry: entry, assetID: assetID)
     let asset = NSEntityDescription.insertNewObject(forEntityName: "JournalEntryAssetMO", into: entry.managedObjectContext!)
     asset.setValue(assetID, forKey: "id")
     asset.setValue(entry.value(forKey: "id") as? UUID, forKey: "parentID")
@@ -2032,8 +2180,13 @@ func addPhotoAttachment(entry: NSManagedObject, imagePath: String, rootPath: Str
     entry.mutableSetValue(forKey: "assets").add(asset)
     try insertImageFileAttachment(asset: asset, assetID: assetID, written: written)
 
-    entry.setValue(try encodeAssetOrdering(currentIDs + [assetID]), forKey: "assetOrdering")
-    try refreshMergeableAssetPlacementFromLegacy(entry: entry)
+    entry.setValue(try encodeAssetOrdering(orderedIDs), forKey: "assetOrdering")
+    try replaceMergeableAssetPlacementByAddingAsset(
+        entry: entry,
+        assetID: assetID,
+        placement: placement,
+        gridIndex: orderedIDs.firstIndex(of: assetID) ?? max(orderedIDs.count - 1, 0)
+    )
     entry.setValue(now, forKey: "updatedDate")
     entry.setValue(now, forKey: "entryDataUpdateDate")
     entry.setValue(false, forKey: "isUploadedToCloud")
@@ -2064,7 +2217,7 @@ func addVideoAttachment(entry: NSManagedObject, videoPath: String, rootPath: Str
         suffix: "_resized.mov",
         name: "video"
     )
-    let currentIDs = currentOrderedAssetIDs(entry: entry)
+    let orderedIDs = orderedAssetIDsAfterAppendingVisibleAttachment(entry: entry, assetID: assetID)
     let asset = NSEntityDescription.insertNewObject(forEntityName: "JournalEntryAssetMO", into: entry.managedObjectContext!)
     asset.setValue(assetID, forKey: "id")
     asset.setValue(entry.value(forKey: "id") as? UUID, forKey: "parentID")
@@ -2089,8 +2242,13 @@ func addVideoAttachment(entry: NSManagedObject, videoPath: String, rootPath: Str
     entry.mutableSetValue(forKey: "assets").add(asset)
     try insertCopiedFileAttachment(asset: asset, assetID: assetID, written: writtenVideo)
 
-    entry.setValue(try encodeAssetOrdering(currentIDs + [assetID]), forKey: "assetOrdering")
-    try refreshMergeableAssetPlacementFromLegacy(entry: entry)
+    entry.setValue(try encodeAssetOrdering(orderedIDs), forKey: "assetOrdering")
+    try replaceMergeableAssetPlacementByAddingAsset(
+        entry: entry,
+        assetID: assetID,
+        placement: placement,
+        gridIndex: orderedIDs.firstIndex(of: assetID) ?? max(orderedIDs.count - 1, 0)
+    )
     entry.setValue(now, forKey: "updatedDate")
     entry.setValue(now, forKey: "entryDataUpdateDate")
     entry.setValue(false, forKey: "isUploadedToCloud")
@@ -2126,7 +2284,7 @@ func addLivePhotoAttachment(
         suffix: "_resized.mov",
         name: "video"
     )
-    let currentIDs = currentOrderedAssetIDs(entry: entry)
+    let orderedIDs = orderedAssetIDsAfterAppendingVisibleAttachment(entry: entry, assetID: assetID)
 
     let asset = NSEntityDescription.insertNewObject(forEntityName: "JournalEntryAssetMO", into: entry.managedObjectContext!)
     asset.setValue(assetID, forKey: "id")
@@ -2151,8 +2309,13 @@ func addLivePhotoAttachment(
     try insertImageFileAttachment(asset: asset, assetID: assetID, written: writtenImage)
     try insertCopiedFileAttachment(asset: asset, assetID: assetID, written: writtenVideo)
 
-    entry.setValue(try encodeAssetOrdering(currentIDs + [assetID]), forKey: "assetOrdering")
-    try refreshMergeableAssetPlacementFromLegacy(entry: entry)
+    entry.setValue(try encodeAssetOrdering(orderedIDs), forKey: "assetOrdering")
+    try replaceMergeableAssetPlacementByAddingAsset(
+        entry: entry,
+        assetID: assetID,
+        placement: placement,
+        gridIndex: orderedIDs.firstIndex(of: assetID) ?? max(orderedIDs.count - 1, 0)
+    )
     entry.setValue(now, forKey: "updatedDate")
     entry.setValue(now, forKey: "entryDataUpdateDate")
     entry.setValue(false, forKey: "isUploadedToCloud")
@@ -2184,7 +2347,7 @@ func addMusicAttachment(
     let suggestionID = UUID()
     let now = Date()
     let written = try writeJPEGImageAttachment(imagePath: coverPath, entryID: entryID, assetID: assetID, rootPath: rootPath)
-    let currentIDs = currentOrderedAssetIDs(entry: entry)
+    let orderedIDs = orderedAssetIDsAfterAppendingVisibleAttachment(entry: entry, assetID: assetID)
 
     let asset = NSEntityDescription.insertNewObject(forEntityName: "JournalEntryAssetMO", into: entry.managedObjectContext!)
     asset.setValue(assetID, forKey: "id")
@@ -2210,8 +2373,13 @@ func addMusicAttachment(
     entry.mutableSetValue(forKey: "assets").add(asset)
     try insertImageFileAttachment(asset: asset, assetID: assetID, written: written)
 
-    entry.setValue(try encodeAssetOrdering(currentIDs + [assetID]), forKey: "assetOrdering")
-    try refreshMergeableAssetPlacementFromLegacy(entry: entry)
+    entry.setValue(try encodeAssetOrdering(orderedIDs), forKey: "assetOrdering")
+    try replaceMergeableAssetPlacementByAddingAsset(
+        entry: entry,
+        assetID: assetID,
+        placement: placement,
+        gridIndex: orderedIDs.firstIndex(of: assetID) ?? max(orderedIDs.count - 1, 0)
+    )
     entry.setValue(now, forKey: "updatedDate")
     entry.setValue(now, forKey: "entryDataUpdateDate")
     entry.setValue(false, forKey: "isUploadedToCloud")
@@ -2456,7 +2624,7 @@ func run() throws {
     }
 
     switch options.command {
-    case "list", "get", "sync-status", "debug-attrs":
+    case "list", "get", "sync-status", "debug-attrs", "debug-placement":
         options.readOnly = true
     case "attachments":
         let mutatingSubcommands: Set<String> = [
@@ -2498,7 +2666,7 @@ func run() throws {
         if let updated = entry.value(forKey: "updatedDate") as? Date { print("updated: \(updated.ISO8601Format())") }
         print("---")
         let text = entryText(entry)
-        print(text, terminator: text.hasSuffix("\n") ? "" : "\n")
+        print(text, terminator: "")
 
     case "add":
         guard let title = options.title else { throw ToolError.usage("add requires --title") }
@@ -2520,6 +2688,7 @@ func run() throws {
         entry.setValue(Int16(0), forKey: "minimumSupportedAppVersion")
         entry.setValue(Int16(0), forKey: "minimumSupportedAppVersionMode")
         try applyText(entry: entry, title: attributedTitle, body: attributedBody, now: now, creating: true)
+        try applyCreatedDate(entry, created: options.created, now: now)
         if let journal = try defaultJournal(context: context) {
             entry.mutableSetValue(forKey: "journals").add(journal)
         }
@@ -2534,7 +2703,11 @@ func run() throws {
         let body = options.bodyPath == nil
             ? rtfAttributedString(entry.value(forKey: "text") as? Data)
             : markdownAttributedString(try readBody(path: options.bodyPath))
-        try applyText(entry: entry, title: title, body: body, now: Date(), creating: false)
+        let now = Date()
+        if options.title != nil || options.bodyPath != nil {
+            try applyText(entry: entry, title: title, body: body, now: now, creating: false)
+        }
+        try applyCreatedDate(entry, created: options.created, now: now)
         try save(context)
         print(entryUUID(entry))
 
@@ -2598,6 +2771,15 @@ func run() throws {
             printAttributedDebug(label: "crdt.text", attributed: decoded)
         } else {
             print("crdt.text: <missing mergeableAttributes>")
+        }
+
+    case "debug-placement":
+        guard options.operands.count == 1 else { throw ToolError.usage("debug-placement requires UUID") }
+        let entry = try fetchEntry(context: context, uuidString: options.operands[0])
+        if let description = assetPlacementDebugDescription(from: entry.value(forKey: "mergeableAttributes") as? NSObject) {
+            print(description)
+        } else {
+            print("<missing mergeableAttributes>")
         }
 
     case "attachments":

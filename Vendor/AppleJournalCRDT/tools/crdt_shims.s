@@ -331,6 +331,42 @@ _js_call_mergeable_entry_assets_placement_from_legacy:
     ldp x30, x19, [sp], #16
     ret
 
+.globl _js_call_mergeable_entry_assets_placement_debug_description
+_js_call_mergeable_entry_assets_placement_debug_description:
+    stp x20, x30, [sp, #-16]!
+    mov x20, x0
+    bl _$s13JournalShared29MergeableEntryAssetsPlacementV16debugDescriptionSSvg
+    ldp x20, x30, [sp], #16
+    ret
+
+.globl _js_call_mergeable_entry_assets_placement_add_asset
+_js_call_mergeable_entry_assets_placement_add_asset:
+    stp x20, x30, [sp, #-16]!
+    sub sp, sp, #32
+    mov x20, x0
+    mov x0, x1
+    cmp x2, #0
+    b.ne 1f
+    str x3, [sp]
+    strb wzr, [sp, #8]
+    b 2f
+1:
+    mov w8, #2
+    str x8, [sp]
+    mov w8, #1
+    strb w8, [sp, #8]
+2:
+    str xzr, [sp, #16]
+    strb wzr, [sp, #24]
+    mov w8, #1
+    strb w8, [sp, #25]
+    mov x1, sp
+    add x2, sp, #16
+    bl _$s13JournalShared29MergeableEntryAssetsPlacementV14addOrMoveAsset6withID2to4fromy10Foundation4UUIDV_AA0jF0OALSgtF
+    add sp, sp, #32
+    ldp x20, x30, [sp], #16
+    ret
+
 .globl _js_call_mergeable_entry_merge_asset_placement
 _js_call_mergeable_entry_merge_asset_placement:
     stp x20, x30, [sp, #-16]!

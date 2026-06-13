@@ -185,6 +185,9 @@ public struct JournalMusicAttachment: Codable, Equatable, Sendable {
 
 public struct JournalPhotoAttachment: Codable, Equatable, Sendable {
     public var id: String
+    /// "photo", "video", or "livePhoto" — Journal's photo carousel mixes all
+    /// three, so Markway's photo pipeline does too.
+    public var assetType: String
     public var source: String
     public var isHidden: Bool
     public var isSlim: Bool
@@ -196,6 +199,7 @@ public struct JournalPhotoAttachment: Codable, Equatable, Sendable {
 
     public init(
         id: String,
+        assetType: String = "photo",
         source: String = "",
         isHidden: Bool = false,
         isSlim: Bool = false,
@@ -206,6 +210,7 @@ public struct JournalPhotoAttachment: Codable, Equatable, Sendable {
         files: [JournalAttachmentFile] = []
     ) {
         self.id = id
+        self.assetType = assetType
         self.source = source
         self.isHidden = isHidden
         self.isSlim = isSlim
@@ -214,6 +219,20 @@ public struct JournalPhotoAttachment: Codable, Equatable, Sendable {
         self.createdDate = createdDate
         self.suggestionDate = suggestionDate
         self.files = files
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        assetType = try container.decodeIfPresent(String.self, forKey: .assetType) ?? "photo"
+        source = try container.decodeIfPresent(String.self, forKey: .source) ?? ""
+        isHidden = try container.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
+        isSlim = try container.decodeIfPresent(Bool.self, forKey: .isSlim) ?? false
+        assetIdentifier = try container.decodeIfPresent(String.self, forKey: .assetIdentifier) ?? ""
+        assetDate = try container.decodeIfPresent(Double.self, forKey: .assetDate)
+        createdDate = try container.decodeIfPresent(String.self, forKey: .createdDate) ?? ""
+        suggestionDate = try container.decodeIfPresent(String.self, forKey: .suggestionDate) ?? ""
+        files = try container.decodeIfPresent([JournalAttachmentFile].self, forKey: .files) ?? []
     }
 }
 
@@ -269,4 +288,10 @@ public protocol JournalBackend: Sendable {
     func photoAttachments(id: String) throws -> [JournalPhotoAttachment]
     func attachments(id: String) throws -> [JournalGenericAttachment]
     func runRaw(_ arguments: [String]) throws -> String
+}
+
+public extension JournalBackend {
+    func updateCreatedDate(id: String, created: String) throws {
+        _ = try runRaw(["update", id, "--created", created])
+    }
 }

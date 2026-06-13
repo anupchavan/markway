@@ -23,6 +23,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
     public var assetID: String?
     public var title: String?
     public var body: String?
+    public var created: String?
     public var includeMusicAttachments: Bool?
     public var includePhotoAttachments: Bool?
     public var includeAttachments: Bool?
@@ -38,6 +39,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         assetID: String? = nil,
         title: String? = nil,
         body: String? = nil,
+        created: String? = nil,
         includeMusicAttachments: Bool? = nil,
         includePhotoAttachments: Bool? = nil,
         includeAttachments: Bool? = nil,
@@ -52,6 +54,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         self.assetID = assetID
         self.title = title
         self.body = body
+        self.created = created
         self.includeMusicAttachments = includeMusicAttachments
         self.includePhotoAttachments = includePhotoAttachments
         self.includeAttachments = includeAttachments
@@ -260,7 +263,8 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
                 existingID: request.journalID,
                 writeMetadata: false,
                 stripTitleHeading: request.stripTitleHeading == true,
-                bodyOverride: request.body
+                bodyOverride: request.body,
+                createdDate: request.created
             )
             return MarkwayBridgeResponse(
                 id: request.id,

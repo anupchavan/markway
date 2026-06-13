@@ -48,7 +48,7 @@ final class JournalTextToolTests: XCTestCase {
     func testParsePhotoAttachmentsFromAttachmentListJSON() throws {
         let photos = try JournalTextTool.parsePhotoAttachments(fromJSON: Self.attachmentListJSON)
 
-        XCTAssertEqual(photos.count, 2)
+        XCTAssertEqual(photos.map(\.assetType), ["photo", "photo", "video", "livePhoto"])
 
         let first = try XCTUnwrap(photos.first)
         XCTAssertEqual(first.id, "C0CA3030-B29F-4CE2-AC30-EDB35E9E2BCB")
@@ -66,7 +66,7 @@ final class JournalTextToolTests: XCTestCase {
         XCTAssertEqual(first.files.first?.exists, true)
         XCTAssertEqual(first.files.first?.byteLength, 300229)
 
-        let second = try XCTUnwrap(photos.last)
+        let second = try XCTUnwrap(photos.dropFirst().first)
         XCTAssertEqual(second.id, "8D981B70-C82B-4D48-B6E9-B8686AA95CEE")
         XCTAssertTrue(second.isHidden)
         XCTAssertEqual(second.files.map(\.name), ["image", "video"])
@@ -74,14 +74,20 @@ final class JournalTextToolTests: XCTestCase {
         XCTAssertNil(second.files.first?.byteLength)
     }
 
-    func testParsePhotoAttachmentsSkipsRemovedAndNonPhotoAssets() throws {
+    func testParsePhotoAttachmentsKeepsVideosAndLivePhotos() throws {
+        let photos = try JournalTextTool.parsePhotoAttachments(fromJSON: Self.attachmentListJSON)
+        let ids = photos.map(\.id)
+
+        XCTAssertTrue(ids.contains("A4C8502B-746C-4C8C-B1B2-FB90C34D134F"), "videos belong to the photo carousel")
+        XCTAssertTrue(ids.contains("11409B4B-AFB8-456F-A68D-B186F7568509"), "live photos belong to the photo carousel")
+    }
+
+    func testParsePhotoAttachmentsSkipsRemovedAndNonVisualAssets() throws {
         let photos = try JournalTextTool.parsePhotoAttachments(fromJSON: Self.attachmentListJSON)
         let ids = photos.map(\.id)
 
         XCTAssertFalse(ids.contains("REMOVED-PHOTO-ID"), "fully removed photos should be skipped")
         XCTAssertFalse(ids.contains("UNDOABLY-DELETED-ID"), "undoably deleted photos should be skipped")
-        XCTAssertFalse(ids.contains("A4C8502B-746C-4C8C-B1B2-FB90C34D134F"), "videos should be skipped")
-        XCTAssertFalse(ids.contains("11409B4B-AFB8-456F-A68D-B186F7568509"), "live photos should be skipped")
         XCTAssertFalse(ids.contains("3473717A-CF90-47DE-8CF4-423FB05245FF"), "music should be skipped")
     }
 

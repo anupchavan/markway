@@ -40,7 +40,8 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
         existingID explicitExistingID: String? = nil,
         writeMetadata: Bool = true,
         stripTitleHeading: Bool = false,
-        bodyOverride: String? = nil
+        bodyOverride: String? = nil,
+        createdDate: String? = nil
     ) throws -> String {
         var document = try MarkdownDocument.read(from: fileURL)
         let title = explicitTitle
@@ -63,6 +64,10 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
         } else {
             id = try journal.add(title: title, bodyFile: bodyURL)
             document[MarkwayMetadataKey.appleJournalID] = id
+        }
+
+        if let createdDate, !createdDate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            try journal.updateCreatedDate(id: id, created: createdDate)
         }
 
         document[MarkwayMetadataKey.title] = title
