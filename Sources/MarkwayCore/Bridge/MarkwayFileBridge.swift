@@ -67,6 +67,7 @@ public enum MarkwayBridgeError: Error, CustomStringConvertible, Sendable {
     case missingPath(String)
     case absolutePathRejected
     case pathOutsideVault(String)
+    case invalidBridgeID(String)
 
     public var description: String {
         switch self {
@@ -76,6 +77,8 @@ public enum MarkwayBridgeError: Error, CustomStringConvertible, Sendable {
             return "bridge requests must use vault-relative paths"
         case .pathOutsideVault(let path):
             return "bridge request path escapes the vault: \(path)"
+        case .invalidBridgeID(let id):
+            return "bridge request id contains unsafe characters: \(id)"
         }
     }
 }
@@ -205,9 +208,12 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
         do {
             let data = try Data(contentsOf: requestURL)
             let request = try JSONDecoder.markway.decode(MarkwayBridgeRequest.self, from: data)
+            guard Self.isSafeBridgeFileID(request.id) else {
+                throw MarkwayBridgeError.invalidBridgeID(request.id)
+            }
             return try process(request)
         } catch {
-            let fallbackID = requestURL.deletingPathExtension().lastPathComponent
+            let fallbackID = Self.safeBridgeFileID(for: requestURL)
             return MarkwayBridgeResponse(
                 id: fallbackID,
                 ok: false,
@@ -424,6 +430,9 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
 
     private func writeResponse(_ response: MarkwayBridgeResponse) throws {
         try prepare()
+        guard Self.isSafeBridgeFileID(response.id) else {
+            throw MarkwayBridgeError.invalidBridgeID(response.id)
+        }
         let responseURL = responsesURL.appendingPathComponent(response.id).appendingPathExtension("json")
         let data = try JSONEncoder.markway.encode(response)
         try data.write(to: responseURL, options: .atomic)
@@ -460,6 +469,27 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
         SHA256.hash(data: Data(vaultPath.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
+    }
+
+    private static func isSafeBridgeFileID(_ id: String) -> Bool {
+        guard !id.isEmpty, id.count <= 128 else {
+            return false
+        }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-"))
+        return id.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    private static func safeBridgeFileID(for requestURL: URL) -> String {
+        let raw = requestURL.deletingPathExtension().lastPathComponent
+        let sanitized = String(raw.unicodeScalars.map { scalar in
+            CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "_-")).contains(scalar)
+                ? Character(scalar)
+                : "-"
+        })
+        if isSafeBridgeFileID(sanitized) {
+            return sanitized
+        }
+        return "INVALID-\(UUID().uuidString.uppercased())"
     }
 
     private func fileURL(for request: MarkwayBridgeRequest, kind: String) throws -> URL {

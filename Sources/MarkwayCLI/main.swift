@@ -8,7 +8,7 @@ struct Markway: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "markway",
         abstract: "A gateway between Apple services and Markdown.",
-        version: "0.1.2",
+        version: "0.1.3",
         subcommands: [
             Doctor.self,
             JournalEntriesCommand.self,
@@ -1832,7 +1832,7 @@ private final class MarkwayTUI {
     private func printBanner() {
         print("\u{001B}[2J\u{001B}[H", terminator: "")
         print("""
-          \u{001B}[1m\(Self.accent)Markway 0.1.2
+          \u{001B}[1m\(Self.accent)Markway 0.1.3
         \u{001B}[0m
           \u{001B}[1mA gateway between Apple services and Markdown\u{001B}[0m
           \u{001B}[2mTab to autocomplete, ↑/↓ for history, Ctrl+C to quit\u{001B}[0m

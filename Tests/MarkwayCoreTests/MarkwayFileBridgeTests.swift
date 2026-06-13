@@ -724,6 +724,33 @@ final class MarkwayFileBridgeTests: XCTestCase {
         XCTAssertTrue(responses.first?.message.contains("escapes the vault") == true)
     }
 
+    func testRejectsUnsafeBridgeRequestIDWithoutWritingOutsideResponses() throws {
+        let temp = try temporaryDirectory()
+        let backend = RecordingJournalBackend(nextID: "UNUSED")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(id: "../ESCAPED", kind: .doctor)
+        try JSONEncoder.markway.encode(request).write(
+            to: bridge.requestsURL.appendingPathComponent("MALICIOUS.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.id, "MALICIOUS")
+        XCTAssertEqual(responses.first?.ok, false)
+        XCTAssertTrue(responses.first?.message.contains("unsafe characters") == true)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: bridge.bridgeURL.appendingPathComponent("ESCAPED.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: bridge.responsesURL.appendingPathComponent("MALICIOUS.json").path))
+        XCTAssertEqual(backend.rawCalls, [])
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
