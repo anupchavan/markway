@@ -41,7 +41,8 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
         writeMetadata: Bool = true,
         stripTitleHeading: Bool = false,
         bodyOverride: String? = nil,
-        createdDate: String? = nil
+        createdDate: String? = nil,
+        createIfMissing: Bool = true
     ) throws -> String {
         var document = try MarkdownDocument.read(from: fileURL)
         let title = explicitTitle
@@ -64,7 +65,7 @@ public struct MarkwaySyncEngine<Backend: JournalBackend>: Sendable {
                 try journal.update(id: existingID, title: title, bodyFile: bodyURL)
                 id = existingID
             } catch {
-                guard Self.shouldCreateEntryAfterUpdateFailure(error) else {
+                guard createIfMissing && Self.shouldCreateEntryAfterUpdateFailure(error) else {
                     throw error
                 }
                 id = try journal.add(title: title, bodyFile: bodyURL)

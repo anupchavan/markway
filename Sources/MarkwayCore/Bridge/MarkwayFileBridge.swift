@@ -28,6 +28,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
     public var includePhotoAttachments: Bool?
     public var includeAttachments: Bool?
     public var stripTitleHeading: Bool?
+    public var createIfMissing: Bool?
     public var requestedAt: String
 
     public init(
@@ -44,6 +45,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         includePhotoAttachments: Bool? = nil,
         includeAttachments: Bool? = nil,
         stripTitleHeading: Bool? = nil,
+        createIfMissing: Bool? = nil,
         requestedAt: String = ISO8601DateFormatter().string(from: Date())
     ) {
         self.id = id
@@ -59,6 +61,7 @@ public struct MarkwayBridgeRequest: Codable, Equatable, Sendable {
         self.includePhotoAttachments = includePhotoAttachments
         self.includeAttachments = includeAttachments
         self.stripTitleHeading = stripTitleHeading
+        self.createIfMissing = createIfMissing
         self.requestedAt = requestedAt
     }
 }
@@ -270,7 +273,8 @@ public struct MarkwayFileBridge<Backend: JournalBackend>: Sendable {
                 writeMetadata: false,
                 stripTitleHeading: request.stripTitleHeading == true,
                 bodyOverride: request.body,
-                createdDate: request.created
+                createdDate: request.created,
+                createIfMissing: request.createIfMissing != false
             )
             return MarkwayBridgeResponse(
                 id: request.id,

@@ -107,6 +107,41 @@ final class MarkwayFileBridgeTests: XCTestCase {
         XCTAssertEqual(backend.updateCalls.count, 0)
     }
 
+    func testJournalPushCanDisableCreateWhenJournalIDIsMissing() throws {
+        let temp = try temporaryDirectory()
+        let note = temp.appendingPathComponent("Entry.md")
+        try "Bridge body".write(to: note, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "NEW-ID")
+        backend.updateError = JournalTextToolError.failed(status: 64, stdout: "", stderr: "entry not found: DELETED-ID")
+        let bridge = MarkwayFileBridge(
+            vaultURL: temp,
+            journal: backend,
+            bridgeBaseURL: temp.appendingPathComponent("BridgeBase")
+        )
+        try bridge.prepare()
+
+        let request = MarkwayBridgeRequest(
+            id: "REQUEST-ID",
+            kind: .journalPush,
+            relativePath: "Entry.md",
+            journalID: "DELETED-ID",
+            createIfMissing: false
+        )
+        let requestData = try JSONEncoder.markway.encode(request)
+        try requestData.write(
+            to: bridge.requestsURL.appendingPathComponent("REQUEST-ID.json"),
+            options: .atomic
+        )
+
+        let responses = try bridge.processPendingRequests()
+
+        XCTAssertEqual(responses.count, 1)
+        XCTAssertEqual(responses.first?.ok, false)
+        XCTAssertEqual(backend.updateCalls.count, 1)
+        XCTAssertEqual(backend.addCalls.count, 0)
+    }
+
     func testProcessesDoctorRequestThroughBackend() throws {
         let temp = try temporaryDirectory()
         let backend = RecordingJournalBackend(nextID: "UNUSED")

@@ -90,6 +90,26 @@ final class MarkwaySyncEngineTests: XCTestCase {
         XCTAssertEqual(backend.addCalls.count, 1)
     }
 
+    func testPushCanDisableCreateWhenExistingIDIsMissingInJournal() throws {
+        let temp = try temporaryDirectory()
+        let file = temp.appendingPathComponent("Entry.md")
+        try "Body".write(to: file, atomically: true, encoding: .utf8)
+
+        let backend = RecordingJournalBackend(nextID: "NEW-ID")
+        backend.updateError = JournalTextToolError.failed(status: 64, stdout: "", stderr: "entry not found: DELETED-ID")
+        let engine = MarkwaySyncEngine(journal: backend)
+
+        XCTAssertThrowsError(try engine.pushMarkdownFile(
+            file,
+            title: "Entry",
+            existingID: "DELETED-ID",
+            createIfMissing: false
+        ))
+        XCTAssertEqual(backend.updateCalls.count, 1)
+        XCTAssertEqual(backend.updateCalls.first?.id, "DELETED-ID")
+        XCTAssertEqual(backend.addCalls.count, 0)
+    }
+
     func testPushDoesNotCreateJournalEntryForUnrelatedUpdateFailure() throws {
         let temp = try temporaryDirectory()
         let file = temp.appendingPathComponent("Entry.md")
